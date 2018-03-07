@@ -1,6 +1,6 @@
 /* vaxmod_defs.h: VAX model-specific definitions file
 
-   Copyright (c) 1998-2013, Robert M Supnik
+   Copyright (c) 1998-2017, Robert M Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -23,6 +23,7 @@
    used in advertising or otherwise to promote the sale, use or other dealings
    in this Software without prior written authorization from Robert M Supnik.
 
+   18-May-17    RMS     Added model-specific AST validation test
    20-Dec-13    RMS     Added prototypes for unaligned IO and register handling
    11-Dec-11    RMS     Moved all Qbus devices to BR4; deleted RP definitions
    25-Nov-11    RMS     Added VEC_QBUS definition
@@ -127,8 +128,8 @@
                         { UNIT_MSIZE, (1u << 28), NULL, "256M", &cpu_set_size, NULL, NULL, "Set Memory to 256M bytes" },            \
                         { UNIT_MSIZE, (1u << 29), NULL, "512M", &cpu_set_size, NULL, NULL, "Set Memory to 512M bytes" },            \
                         { MTAB_XTD|MTAB_VDV|MTAB_NMO, 0, "MEMORY", NULL, NULL, &cpu_show_memory, NULL, "Display memory configuration" }
-extern t_stat cpu_show_memory (FILE* st, UNIT* uptr, int32 val, void* desc);
-#define CPU_MODEL_MODIFIERS { MTAB_XTD|MTAB_VDV, 0, "MODEL", "MODEL={VAXServer|MicroVAX}",                  \
+extern t_stat cpu_show_memory (FILE* st, UNIT* uptr, int32 val, CONST void* desc);
+#define CPU_MODEL_MODIFIERS { MTAB_XTD|MTAB_VDV, 0, "MODEL", "MODEL={VAXServer|MicroVAX|VAXStation}",       \
                               &cpu_set_model, &cpu_show_model, NULL, "Set/Display processor model" },       \
                             { MTAB_XTD|MTAB_VDV, 0,          "AUTOBOOT",   "AUTOBOOT",                      \
                               &sysd_set_halt, &sysd_show_halt, NULL, "Enable autoboot (Disable Halt)" },    \
@@ -232,7 +233,7 @@ extern t_stat cpu_show_memory (FILE* st, UNIT* uptr, int32 val, void* desc);
 #define ADDR_IS_QVM(x)  ((((uint32) (x)) >= QVMBASE) && \
                         (((uint32) (x)) < (QVMBASE + QVMSIZE)))
 
-/* Machine specific reserved operand tests (all NOPs) */
+/* Machine specific reserved operand tests (mostly NOPs) */
 
 #define ML_PA_TEST(r)
 #define ML_LR_TEST(r)
@@ -241,6 +242,9 @@ extern t_stat cpu_show_memory (FILE* st, UNIT* uptr, int32 val, void* desc);
 #define LP_AST_TEST(r)
 #define LP_MBZ84_TEST(r)
 #define LP_MBZ92_TEST(r)
+
+#define MT_AST_TEST(r)  if ((r) > AST_MAX) RSVD_OPND_FAULT
+
 
 /* Qbus I/O modes */
 
@@ -296,7 +300,15 @@ typedef struct {
     int32               vloc;                           /* locator */
     int32               vec;                            /* value */
     int32               (*ack[VEC_DEVMAX])(void);       /* ack routine */
-    uint32              ulnt;                           /* IO length per unit */
+    uint32              ulnt;                           /* IO length per-device */
+                                                        /* Only need to be populated */
+                                                        /* when numunits != num devices */
+    int32               numc;                           /* Number of controllers */
+                                                        /* this field handles devices */
+                                                        /* where multiple instances are */
+                                                        /* simulated through a single */
+                                                        /* DEVICE structure (e.g., DZ, VH, DL, DC). */
+                                                        /* Populated by auto-configure */
     } DIB;
 
 /* Qbus I/O page layout - see pdp11_io_lib.c for address layout details */
@@ -344,6 +356,8 @@ typedef struct {
 #define INT_V_QVSS      21                              /* QVSS */
 #define INT_V_DMCRX     22                              /* DMC11 */
 #define INT_V_DMCTX     23
+#define INT_V_TDRX      24                              /* TU58 */
+#define INT_V_TDTX      25
 
 #define INT_CLK         (1u << INT_V_CLK)
 #define INT_RQ          (1u << INT_V_RQ)
@@ -370,6 +384,8 @@ typedef struct {
 #define INT_QVSS        (1u << INT_V_QVSS)
 #define INT_DMCRX       (1u << INT_V_DMCRX)
 #define INT_DMCTX       (1u << INT_V_DMCTX)
+#define INT_TDRX        (1u << INT_V_TDRX)
+#define INT_TDTX        (1u << INT_V_TDTX)
 
 #define IPL_CLK         (0x16 - IPL_HMIN)                       /* relative IPL */
 #define IPL_RQ          (0x14 - IPL_HMIN)
@@ -396,6 +412,8 @@ typedef struct {
 #define IPL_QVSS        (0x14 - IPL_HMIN)
 #define IPL_DMCRX       (0x14 - IPL_HMIN)
 #define IPL_DMCTX       (0x14 - IPL_HMIN)
+#define IPL_TDRX        (0x14 - IPL_HMIN)
+#define IPL_TDTX        (0x14 - IPL_HMIN)
 
 #define IPL_HMAX        0x17                            /* highest hwre level */
 #define IPL_HMIN        0x14                            /* lowest hwre level */
@@ -408,7 +426,7 @@ typedef struct {
 #define VEC_FLOAT       (0)                             /* Assigned by Auto Configure */
 
 #define VEC_QBUS        1                               /* Qbus system */
-#define VEC_Q           0x200                           /* Qbus vector offset */
+#define VEC_SET         0x201                           /* Vector bits to set in Qbus vectors */
 
 /* Interrupt macros */
 
@@ -428,13 +446,13 @@ typedef struct {
 
 int32 Map_ReadB (uint32 ba, int32 bc, uint8 *buf);
 int32 Map_ReadW (uint32 ba, int32 bc, uint16 *buf);
-int32 Map_WriteB (uint32 ba, int32 bc, uint8 *buf);
-int32 Map_WriteW (uint32 ba, int32 bc, uint16 *buf);
+int32 Map_WriteB (uint32 ba, int32 bc, const uint8 *buf);
+int32 Map_WriteW (uint32 ba, int32 bc, const uint16 *buf);
 
 #include "pdp11_io_lib.h"
 
-extern t_stat sysd_set_halt (UNIT *uptr, int32 val, char *cptr, void *desc);
-extern t_stat sysd_show_halt (FILE *st, UNIT *uptr, int32 val, void *desc);
+extern t_stat sysd_set_halt (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+extern t_stat sysd_show_halt (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 
 /* Function prototypes for system-specific unaligned support */
 

@@ -16,14 +16,18 @@
 # This build script will accept the following build options.
 #
 #            ALL             Just Build "Everything".
+#            3B2             Just Build The AT&T 3B2.
 #            ALTAIR          Just Build The MITS Altair.
 #            ALTAIRZ80       Just Build The MITS Altair Z80.
 #            BESM6           Just Build The BESM-6.
+#            B5500           Just Build The B5500.
+#            CDC1700         Just Build The CDC1700.
 #            ECLIPSE         Just Build The Data General Eclipse.
 #            GRI             Just Build The GRI Corporation GRI-909.
 #            LGP             Just Build The Royal-McBee LGP-30.
 #            H316            Just Build The Honewell 316/516.
 #            HP2100          Just Build The Hewlett-Packard HP-2100. 
+#            HP3000          Just Build The Hewlett-Packard HP-3000. 
 #            I1401           Just Build The IBM 1401.
 #            I1620           Just Build The IBM 1620.
 #            I7094           Just Build The IBM 7094.
@@ -273,9 +277,9 @@ PCAP_SIMH_INC = /INCL=($(PCAP_DIR))
   @ 'MISS_SAY' "*** Error *** "
   @ 'MISS_SAY' "*** Error *** The vms-pcap.zip file can be downloaded from:"
   @ 'MISS_SAY' "*** Error *** "
-  @ 'MISS_SAY' "*** Error ***     https://github.com/markpizz/simh/downloads"
+  @ 'MISS_SAY' "*** Error ***     https://github.com/simh/simh/archive/vms-pcap.zip"
   @ 'MISS_SAY' "*** Error *** "
-  @ 'MISS_SAY' "*** Error *** Be sure to ""unzip -a vms-pcap"" to properly set the file attributes"
+  @ 'MISS_SAY' "*** Error *** Be sure to ""unzip -aa simh-vms-pcap.zip"" to properly set the file attributes"
   @ 'MISS_SAY' "*** Error *** "
   @ 'MISS_SAY' "*** Error *** The PCAP-VMS components are presumed (by this procedure) to be"
   @ 'MISS_SAY' "*** Error *** located in a directory at the same level as the directory"
@@ -303,6 +307,17 @@ PCAP_SIMH_INC = /INCL=($(PCAP_DIR))
   @ IF (("$(BUILDING_ROMS)".EQS."").AND.(F$SEARCH("$(BIN_DIR)BuildROMs-$(ARCH).EXE").EQS."")) THEN $(MMS) BUILDROMS/MACRO=(BUILDING_ROMS=1$(NEST_DEBUG))
 
 
+# AT&T 3B2 Simulator Definitions.
+#
+ATT3B2_DIR = SYS$DISK:[.3B2]
+ATT3B2_LIB = $(LIB_DIR)ATT3B2-$(ARCH).OLB
+ATT3B2_SOURCE = $(ATT3B2_DIR)3B2_CPU.C,$(ATT3B2_DIR)3B2_DMAC.C,\
+                $(ATT3B2_DIR)3B2_ID.C,$(ATT3B2_DIR)3B2_IF.C,\
+                $(ATT3B2_DIR)3B2_IO.C,$(ATT3B2_DIR)3B2_IU.C,\
+                $(ATT3B2_DIR)3B2_MMU.C,$(ATT3B2_DIR)3B2_SYS.C,\
+                $(ATT3B2_DIR)3B2_SYSDEV.C
+ATT3B2_OPTIONS = /INCL=($(SIMH_DIR),$(ATT3B2_DIR))/DEF=($(CC_DEFS))
+
 # MITS Altair Simulator Definitions.
 #
 ALTAIR_DIR = SYS$DISK:[.ALTAIR]
@@ -323,7 +338,8 @@ ALTAIRZ80_SOURCE1 = $(ALTAIRZ80_DIR)ALTAIRZ80_CPU.C,$(ALTAIRZ80_DIR)ALTAIRZ80_CP
                     $(ALTAIRZ80_DIR)FLASHWRITER2.C,$(ALTAIRZ80_DIR)I86_DECODE.C,\
                     $(ALTAIRZ80_DIR)I86_OPS.C,$(ALTAIRZ80_DIR)I86_PRIM_OPS.C,\
                     $(ALTAIRZ80_DIR)I8272.C,$(ALTAIRZ80_DIR)INSNSD.C,\
-                    $(ALTAIRZ80_DIR)MFDC.C,$(ALTAIRZ80_DIR)N8VEM.C,$(ALTAIRZ80_DIR)VFDHD.C
+                    $(ALTAIRZ80_DIR)MFDC.C,$(ALTAIRZ80_DIR)N8VEM.C,\
+                    $(ALTAIRZ80_DIR)S100_MDSA.C,$(ALTAIRZ80_DIR)VFDHD.C
 ALTAIRZ80_LIB2 = $(LIB_DIR)ALTAIRZ80L2-$(ARCH).OLB
 ALTAIRZ80_SOURCE2 = $(ALTAIRZ80_DIR)S100_DISK1A.C,$(ALTAIRZ80_DIR)S100_DISK2.C,\
                     $(ALTAIRZ80_DIR)S100_FIF.C,$(ALTAIRZ80_DIR)S100_MDRIVEH.C,\
@@ -413,12 +429,34 @@ HP2100_LIB2 = $(LIB_DIR)HP2100L2-$(ARCH).OLB
 HP2100_SOURCE2 = $(HP2100_DIR)HP2100_FP1.C,$(HP2100_DIR)HP2100_BACI.C,\
                  $(HP2100_DIR)HP2100_MPX.C,$(HP2100_DIR)HP2100_PIF.C,\
                  $(HP2100_DIR)HP2100_DI.C,$(HP2100_DIR)HP2100_DI_DA.C,\
-                 $(HP2100_DIR)HP_DISCLIB.C
+                 $(HP2100_DIR)HP2100_DISCLIB.C
 .IFDEF ALPHA_OR_IA64
 HP2100_OPTIONS = /INCL=($(SIMH_DIR),$(HP2100_DIR))\
                     /DEF=($(CC_DEFS),"HAVE_INT64=1")
 .ELSE
 HP2100_OPTIONS = /INCL=($(SIMH_DIR),$(HP2100_DIR))/DEF=($(CC_DEFS))
+.ENDIF
+
+#
+# Hewlett-Packard HP-3000 Simulator Definitions.
+#
+HP3000_DIR = SYS$DISK:[.HP3000]
+HP3000_LIB1 = $(LIB_DIR)HP3000L1-$(ARCH).OLB
+HP3000_SOURCE1 = $(HP3000_DIR)HP3000_ATC.C,$(HP3000_DIR)HP3000_CLK.C,\
+                 $(HP3000_DIR)HP3000_CPU.C,$(HP3000_DIR)HP3000_CPU_BASE.C,\
+                 $(HP3000_DIR)HP3000_CPU_CIS.C,$(HP3000_DIR)HP3000_CPU_FP.C,\
+                 $(HP3000_DIR)HP3000_DS.C,$(HP3000_DIR)HP3000_LP.C,\
+                 $(HP3000_DIR)HP3000_IOP.C,$(HP3000_DIR)HP3000_MEM.C,\
+                 $(HP3000_DIR)HP3000_MPX.C,\
+                 $(HP3000_DIR)HP3000_MS.C,$(HP3000_DIR)HP3000_SCMB.C,\
+                 $(HP3000_DIR)HP3000_SEL.C,$(HP3000_DIR)HP3000_SYS.C
+HP3000_LIB2 = $(LIB_DIR)HP3000L2-$(ARCH).OLB
+HP3000_SOURCE2 = $(HP3000_DIR)HP_TAPELIB.C,$(HP3000_DIR)HP_DISCLIB.C
+.IFDEF ALPHA_OR_IA64
+HP3000_OPTIONS = /INCL=($(SIMH_DIR),$(HP3000_DIR))\
+                    /DEF=($(CC_DEFS),"HAVE_INT64=1")
+.ELSE
+HP3000_OPTIONS = /INCL=($(SIMH_DIR),$(HP3000_DIR))/DEF=($(CC_DEFS))
 .ENDIF
 
 #
@@ -523,7 +561,8 @@ PDP18B_SOURCE = $(PDP18B_DIR)PDP18B_DT.C,$(PDP18B_DIR)PDP18B_DRM.C,\
                 $(PDP18B_DIR)PDP18B_MT.C,$(PDP18B_DIR)PDP18B_RF.C,\
                 $(PDP18B_DIR)PDP18B_RP.C,$(PDP18B_DIR)PDP18B_STDDEV.C,\
                 $(PDP18B_DIR)PDP18B_SYS.C,$(PDP18B_DIR)PDP18B_TT1.C,\
-                $(PDP18B_DIR)PDP18B_RB.C,$(PDP18B_DIR)PDP18B_FPP.C
+                $(PDP18B_DIR)PDP18B_RB.C,$(PDP18B_DIR)PDP18B_FPP.C,\
+                $(PDP18B_DIR)PDP18B_G2TTY.C
 PDP4_OPTIONS = /INCL=($(SIMH_DIR),$(PDP18B_DIR))/DEF=($(CC_DEFS),"PDP4=1")
 PDP7_OPTIONS = /INCL=($(SIMH_DIR),$(PDP18B_DIR))/DEF=($(CC_DEFS),"PDP7=1")
 PDP9_OPTIONS = /INCL=($(SIMH_DIR),$(PDP18B_DIR))/DEF=($(CC_DEFS),"PDP9=1")
@@ -548,7 +587,7 @@ PDP11_SOURCE1 = $(PDP11_DIR)PDP11_FP.C,$(PDP11_DIR)PDP11_CPU.C,\
 PDP11_LIB2 = $(LIB_DIR)PDP11L2-$(ARCH).OLB
 PDP11_SOURCE2 = $(PDP11_DIR)PDP11_TM.C,$(PDP11_DIR)PDP11_TS.C,\
                $(PDP11_DIR)PDP11_IO.C,$(PDP11_DIR)PDP11_RQ.C,\
-               $(PDP11_DIR)PDP11_TQ.C,$(PDP11_DIR)PDP11_PCLK.C,\
+               $(PDP11_DIR)PDP11_TD.C,$(PDP11_DIR)PDP11_TQ.C,$(PDP11_DIR)PDP11_PCLK.C,\
                $(PDP11_DIR)PDP11_RY.C,$(PDP11_DIR)PDP11_PT.C,\
                $(PDP11_DIR)PDP11_HK.C,$(PDP11_DIR)PDP11_XQ.C,\
                $(PDP11_DIR)PDP11_VH.C,$(PDP11_DIR)PDP11_RH.C,\
@@ -574,7 +613,7 @@ PDP10_SOURCE = $(PDP10_DIR)PDP10_FE.C,\
                $(PDP11_DIR)PDP11_RY.C,$(PDP11_DIR)PDP11_CR.C,\
                $(PDP11_DIR)PDP11_DUP.C,$(PDP11_DIR)PDP11_DMC.C,\
                $(PDP11_DIR)PDP11_KMC.C,$(PDP11_DIR)PDP11_XU.C
-PDP10_OPTIONS = /INCL=($(SIMH_DIR),$(PDP10_DIR),$(PDP11_DIR))\
+PDP10_OPTIONS = /INCL=($(SIMH_DIR),$(PDP10_DIR),$(PDP11_DIR)$(PCAP_INC))\
                 /DEF=($(CC_DEFS),"USE_INT64=1","VM_PDP10=1"$(PCAP_DEFS))
 
 #
@@ -629,7 +668,6 @@ SWTP6800MP_A2_SOURCE = $(SWTP6800MP_A2_COMMON)mp-a2.c,$(SWTP6800MP_A2_COMMON)m68
 	$(SWTP6800MP_A2_COMMON)mp-8m.c,$(SWTP6800MP_A2_COMMON)i2716.c
 SWTP6800MP_A2_OPTIONS = /INCL=($(SIMH_DIR),$(SWTP6800MP_A2_DIR))/DEF=($(CC_DEFS))
 
-
 #
 # BESM6
 #
@@ -638,8 +676,30 @@ BESM6_LIB = $(LIB_DIR)BESM6-$(ARCH).OLB
 BESM6_SOURCE = $(BESM6_DIR)BESM6_CPU.C,$(BESM6_DIR)BESM6_SYS.C,$(BESM6_DIR)BESM6_MMU.C,\
 	$(BESM6_DIR)BESM6_ARITH.C,$(BESM6_DIR)BESM6_DISK.C,$(BESM6_DIR)BESM6_DRUM.C,\
 	$(BESM6_DIR)BESM6_TTY.C,$(BESM6_DIR)BESM6_PANEL.C,$(BESM6_DIR)BESM6_PRINTER.C,\
-	$(BESM6_DIR)BESM6_PUNCH.C
+	$(BESM6_DIR)BESM6_PUNCHCARD.C,$(BESM6_DIR)BESM6_PUNCH.C
 BESM6_OPTIONS = /INCL=($(SIMH_DIR),$(BESM6_DIR))/DEF=($(CC_DEFS),"USE_INT64=1")
+
+#
+# B5500
+#
+B5500_DIR = SYS$DISK:[.B5500]
+B5500_LIB = $(LIB_DIR)B5500-$(ARCH).OLB
+B5500_SOURCE = $(B5500_DIR)B5500_CPU.C,$(B5500_DIR)B5500_DK.C,$(B5500_DIR)B5500_DR.C,\
+	$(B5500_DIR)B5500_DTC.C,$(B5500_DIR)B5500_IO.C,$(B5500_DIR)B5500_MT.C,\
+	$(B5500_DIR)B5500_SYS.C,$(B5500_DIR)B5500_UREC.C,$(SIMH_DIR)SIM_CARD.C
+B5500_OPTIONS = /INCL=($(SIMH_DIR),$(B5500_DIR))/DEF=($(CC_DEFS),"USE_INT64=1","USE_SIM_CARD=1")
+
+#
+# CDC1700
+#
+CDC1700_DIR = SYS$DISK:[.CDC1700]
+CDC1700_LIB = $(LIB_DIR)CDC1700-$(ARCH).OLB
+CDC1700_SOURCE = $(CDC1700_DIR)CDC1700_CPU.C,$(CDC1700_DIR)CDC1700_DIS.C,$(CDC1700_DIR)CDC1700_IO.C,\
+	$(CDC1700_DIR)CDC1700_SYS.C,$(CDC1700_DIR)CDC1700_DEV1.C,$(CDC1700_DIR)CDC1700_MT.C,\
+	$(CDC1700_DIR)CDC1700_DC.C,$(CDC1700_DIR)CDC1700_IOFW.C,$(CDC1700_DIR)CDC1700_LP.C,\
+	$(CDC1700_DIR)CDC1700_DP.C,$(CDC1700_DIR)CDC1700_CD.C,$(CDC1700_DIR)CDC1700_SYM.C,\
+	$(CDC1700_DIR)CDC1700_RTC.C $(CDC1700_DIR)CDC1700_MSOS5.C $(CDC1700_DIR)CDC1700_DRM.C
+CDC1700_OPTIONS = /INCL=($(SIMH_DIR),$(CDC1700_DIR))/DEF=($(CC_DEFS))
 
 #
 # Digital Equipment VAX 3900 Simulator Definitions.
@@ -657,7 +717,7 @@ VAX_SOURCE1 = $(VAX_DIR)VAX_CIS.C,$(VAX_DIR)VAX_CMODE.C,\
 VAX_SOURCE2 = $(PDP11_DIR)PDP11_IO_LIB.C,\
               $(PDP11_DIR)PDP11_RL.C,$(PDP11_DIR)PDP11_RQ.C,\
               $(PDP11_DIR)PDP11_TS.C,$(PDP11_DIR)PDP11_DZ.C,\
-              $(PDP11_DIR)PDP11_LP.C,$(PDP11_DIR)PDP11_TQ.C,\
+              $(PDP11_DIR)PDP11_LP.C,$(PDP11_DIR)PDP11_TD.C,$(PDP11_DIR)PDP11_TQ.C,\
               $(PDP11_DIR)PDP11_XQ.C,$(PDP11_DIR)PDP11_VH.C,\
               $(PDP11_DIR)PDP11_CR.C,\
               $(VAX_DIR)VAX_VC.C,$(VAX_DIR)VAX_LK.C,\
@@ -687,7 +747,7 @@ VAX610_LIB2 = $(LIB_DIR)VAX610L2-$(ARCH).OLB
 VAX610_SOURCE2 = $(PDP11_DIR)PDP11_IO_LIB.C,\
                  $(PDP11_DIR)PDP11_RL.C,$(PDP11_DIR)PDP11_RQ.C,\
                  $(PDP11_DIR)PDP11_TS.C,$(PDP11_DIR)PDP11_DZ.C,\
-                 $(PDP11_DIR)PDP11_LP.C,$(PDP11_DIR)PDP11_TQ.C,\
+                 $(PDP11_DIR)PDP11_LP.C,$(PDP11_DIR)PDP11_TD.C,$(PDP11_DIR)PDP11_TQ.C,\
                  $(PDP11_DIR)PDP11_XQ.C,$(PDP11_DIR)PDP11_VH.C,\
                  $(PDP11_DIR)PDP11_CR.C,$(VAX610_DIR)VAX_VC.C,\
                  $(VAX610_DIR)VAX_LK.C,$(VAX610_DIR)VAX_VS.C,\
@@ -717,7 +777,7 @@ VAX630_LIB2 = $(LIB_DIR)VAX630L2-$(ARCH).OLB
 VAX630_SOURCE2 = $(PDP11_DIR)PDP11_IO_LIB.C,\
                  $(PDP11_DIR)PDP11_RL.C,$(PDP11_DIR)PDP11_RQ.C,\
                  $(PDP11_DIR)PDP11_TS.C,$(PDP11_DIR)PDP11_DZ.C,\
-                 $(PDP11_DIR)PDP11_LP.C,$(PDP11_DIR)PDP11_TQ.C,\
+                 $(PDP11_DIR)PDP11_LP.C,$(PDP11_DIR)PDP11_TD.C,$(PDP11_DIR)PDP11_TQ.C,\
                  $(PDP11_DIR)PDP11_XQ.C,$(PDP11_DIR)PDP11_VH.C,\
                  $(PDP11_DIR)PDP11_CR.C,$(VAX630_DIR)VAX_VC.C,\
                  $(VAX630_DIR)VAX_LK.C,$(VAX630_DIR)VAX_VS.C,\
@@ -747,7 +807,7 @@ VAX620_LIB2 = $(LIB_DIR)VAX620L2-$(ARCH).OLB
 VAX620_SOURCE2 = $(PDP11_DIR)PDP11_IO_LIB.C,\
                  $(PDP11_DIR)PDP11_RL.C,$(PDP11_DIR)PDP11_RQ.C,\
                  $(PDP11_DIR)PDP11_TS.C,$(PDP11_DIR)PDP11_DZ.C,\
-                 $(PDP11_DIR)PDP11_LP.C,$(PDP11_DIR)PDP11_TQ.C,\
+                 $(PDP11_DIR)PDP11_LP.C,$(PDP11_DIR)PDP11_TD.C,$(PDP11_DIR)PDP11_TQ.C,\
                  $(PDP11_DIR)PDP11_XQ.C,$(PDP11_DIR)PDP11_VH.C,\
                  $(PDP11_DIR)PDP11_CR.C,$(VAX620_DIR)VAX_VC.C,\
                  $(VAX620_DIR)VAX_LK.C,$(VAX620_DIR)VAX_VS.C,\
@@ -777,11 +837,11 @@ VAX730_SOURCE1 = $(VAX730_DIR)VAX_CPU.C,$(VAX730_DIR)VAX_CPU1.C,\
 VAX730_LIB2 = $(LIB_DIR)VAX730L2-$(ARCH).OLB
 VAX730_SOURCE2 = $(PDP11_DIR)PDP11_RL.C,$(PDP11_DIR)PDP11_RQ.C,\
                  $(PDP11_DIR)PDP11_TS.C,$(PDP11_DIR)PDP11_DZ.C,\
-                 $(PDP11_DIR)PDP11_LP.C,$(PDP11_DIR)PDP11_TQ.C,\
+                 $(PDP11_DIR)PDP11_LP.C,$(PDP11_DIR)PDP11_TD.C,$(PDP11_DIR)PDP11_TQ.C,\
                  $(PDP11_DIR)PDP11_XU.C,$(PDP11_DIR)PDP11_RY.C,\
                  $(PDP11_DIR)PDP11_CR.C,$(PDP11_DIR)PDP11_HK.C,\
                  $(PDP11_DIR)PDP11_VH.C,$(PDP11_DIR)PDP11_DMC.C,\
-                 $(PDP11_DIR)PDP11_DUP.C,$(PDP11_DIR)PDP11_IO_LIB.C
+                 $(PDP11_DIR)PDP11_TC.C,$(PDP11_DIR)PDP11_RK.C,$(PDP11_DIR)PDP11_IO_LIB.C
 .IFDEF ALPHA_OR_IA64
 VAX730_OPTIONS = /INCL=($(SIMH_DIR),$(VAX730_DIR),$(PDP11_DIR)$(PCAP_INC))\
                  /DEF=($(CC_DEFS),"VM_VAX=1","USE_ADDR64=1","USE_INT64=1"$(PCAP_DEFS),"VAX_730=1")
@@ -807,12 +867,12 @@ VAX750_SOURCE1 = $(VAX750_DIR)VAX_CPU.C,$(VAX750_DIR)VAX_CPU1.C,\
 VAX750_LIB2 = $(LIB_DIR)VAX750L2-$(ARCH).OLB
 VAX750_SOURCE2 = $(PDP11_DIR)PDP11_RL.C,$(PDP11_DIR)PDP11_RQ.C,\
                  $(PDP11_DIR)PDP11_TS.C,$(PDP11_DIR)PDP11_DZ.C,\
-                 $(PDP11_DIR)PDP11_LP.C,$(PDP11_DIR)PDP11_TQ.C,\
+                 $(PDP11_DIR)PDP11_LP.C,$(PDP11_DIR)PDP11_TD.C,$(PDP11_DIR)PDP11_TQ.C,\
                  $(PDP11_DIR)PDP11_XU.C,$(PDP11_DIR)PDP11_RY.C,\
                  $(PDP11_DIR)PDP11_CR.C,$(PDP11_DIR)PDP11_HK.C,\
                  $(PDP11_DIR)PDP11_RP.C,$(PDP11_DIR)PDP11_TU.C,\
                  $(PDP11_DIR)PDP11_VH.C,$(PDP11_DIR)PDP11_DMC.C,\
-                 $(PDP11_DIR)PDP11_DUP.C,$(PDP11_DIR)PDP11_IO_LIB.C
+                 $(PDP11_DIR)PDP11_TC.C,$(PDP11_DIR)PDP11_RK.C,$(PDP11_DIR)PDP11_IO_LIB.C
 .IFDEF ALPHA_OR_IA64
 VAX750_OPTIONS = /INCL=($(SIMH_DIR),$(VAX750_DIR),$(PDP11_DIR)$(PCAP_INC))\
                  /DEF=($(CC_DEFS),"VM_VAX=1","USE_ADDR64=1","USE_INT64=1"$(PCAP_DEFS),"VAX_750=1")
@@ -838,12 +898,12 @@ VAX780_SOURCE1 = $(VAX780_DIR)VAX_CPU.C,$(VAX780_DIR)VAX_CPU1.C,\
 VAX780_LIB2 = $(LIB_DIR)VAX780L2-$(ARCH).OLB
 VAX780_SOURCE2 = $(PDP11_DIR)PDP11_RL.C,$(PDP11_DIR)PDP11_RQ.C,\
                  $(PDP11_DIR)PDP11_TS.C,$(PDP11_DIR)PDP11_DZ.C,\
-                 $(PDP11_DIR)PDP11_LP.C,$(PDP11_DIR)PDP11_TQ.C,\
+                 $(PDP11_DIR)PDP11_LP.C,$(PDP11_DIR)PDP11_TD.C,$(PDP11_DIR)PDP11_TQ.C,\
                  $(PDP11_DIR)PDP11_XU.C,$(PDP11_DIR)PDP11_RY.C,\
                  $(PDP11_DIR)PDP11_CR.C,$(PDP11_DIR)PDP11_RP.C,\
                  $(PDP11_DIR)PDP11_TU.C,$(PDP11_DIR)PDP11_HK.C,\
                  $(PDP11_DIR)PDP11_VH.C,$(PDP11_DIR)PDP11_DMC.C,\
-                 $(PDP11_DIR)PDP11_DUP.C,$(PDP11_DIR)PDP11_IO_LIB.C
+                 $(PDP11_DIR)PDP11_TC.C,$(PDP11_DIR)PDP11_RK.C,$(PDP11_DIR)PDP11_IO_LIB.C
 .IFDEF ALPHA_OR_IA64
 VAX780_OPTIONS = /INCL=($(SIMH_DIR),$(VAX780_DIR),$(PDP11_DIR)$(PCAP_INC))\
                  /DEF=($(CC_DEFS),"VM_VAX=1","USE_ADDR64=1","USE_INT64=1"$(PCAP_DEFS),"VAX_780=1")
@@ -869,12 +929,12 @@ VAX8600_SOURCE1 = $(VAX8600_DIR)VAX_CPU.C,$(VAX8600_DIR)VAX_CPU1.C,\
 VAX8600_LIB2 = $(LIB_DIR)VAX860L2-$(ARCH).OLB
 VAX8600_SOURCE2 = $(PDP11_DIR)PDP11_RL.C,$(PDP11_DIR)PDP11_RQ.C,\
                  $(PDP11_DIR)PDP11_TS.C,$(PDP11_DIR)PDP11_DZ.C,\
-                 $(PDP11_DIR)PDP11_LP.C,$(PDP11_DIR)PDP11_TQ.C,\
+                 $(PDP11_DIR)PDP11_LP.C,$(PDP11_DIR)PDP11_TD.C,$(PDP11_DIR)PDP11_TQ.C,\
                  $(PDP11_DIR)PDP11_XU.C,$(PDP11_DIR)PDP11_RY.C,\
                  $(PDP11_DIR)PDP11_CR.C,$(PDP11_DIR)PDP11_RP.C,\
                  $(PDP11_DIR)PDP11_TU.C,$(PDP11_DIR)PDP11_HK.C,\
                  $(PDP11_DIR)PDP11_VH.C,$(PDP11_DIR)PDP11_DMC.C,\
-                 $(PDP11_DIR)PDP11_DUP.C,$(PDP11_DIR)PDP11_IO_LIB.C
+                 $(PDP11_DIR)PDP11_TC.C,$(PDP11_DIR)PDP11_RK.C,$(PDP11_DIR)PDP11_IO_LIB.C
 .IFDEF ALPHA_OR_IA64
 VAX8600_OPTIONS = /INCL=($(SIMH_DIR),$(VAX8600_DIR),$(PDP11_DIR)$(PCAP_INC))\
                  /DEF=($(CC_DEFS),"VM_VAX=1","USE_ADDR64=1","USE_INT64=1"$(PCAP_DEFS),"VAX_860=1")
@@ -900,16 +960,16 @@ I7094_OPTIONS = /INCL=($(SIMH_DIR),$(I7094_DIR))/DEF=($(CC_DEFS))
 # If we're not a VAX, Build Everything
 #
 .IFDEF ALPHA_OR_IA64
-ALL : ALTAIR ALTAIRZ80 ECLIPSE GRI LGP H316 HP2100 I1401 I1620 IBM1130 ID16 \
-      ID32 NOVA PDP1 PDP4 PDP7 PDP8 PDP9 PDP10 PDP11 PDP15 S3 \
+ALL : ALTAIR ALTAIRZ80 CDC1700 ECLIPSE GRI LGP H316 HP2100 HP3000 I1401 I1620 \
+      IBM1130 ID16 ID32 NOVA PDP1 PDP4 PDP7 PDP8 PDP9 PDP10 PDP11 PDP15 S3 \
       VAX MICROVAX3900 MICROVAX1 RTVAX1000 MICROVAX2 VAX730 VAX750 VAX780 VAX8600 \
-      SDS I7094 SWTP6800MP-A SWTP6800MP-A2 SSEM BESM6
+      SDS I7094 SWTP6800MP-A SWTP6800MP-A2 SSEM BESM6 B5500
         $! No further actions necessary
 .ELSE
 #
 # Else We Are On VAX And Build Everything EXCEPT the 64b simulators
 #
-ALL : ALTAIR ALTAIRZ80 GRI H316 HP2100 I1401 I1620 IBM1130 ID16 ID32 \
+ALL : ALTAIR GRI H316 HP2100 I1401 I1620 IBM1130 ID16 ID32 \
       NOVA PDP1 PDP4 PDP7 PDP8 PDP9 PDP11 PDP15 S3 \
       VAX MICROVAX3900 MICROVAX1 RTVAX1000 MICROVAX2 VAX730 VAX750 VAX780 VAX8600 \
       SDS SWTP6800MP-A SWTP6800MP-A2 SSEM
@@ -985,6 +1045,17 @@ $(SIMH_LIB64) : $(SIMH_SOURCE)
         $ DELETE/NOLOG/NOCONFIRM $(BLD_DIR)*.OBJ;*
 .ENDIF
 
+$(ATT3B2_LIB) : $(ATT3B2_SOURCE)
+        $!
+        $! Building The $(ATT3B2_LIB) Library.
+        $!
+        $ $(CC)$(ATT3B2_OPTIONS) -
+               /OBJ=$(BLD_DIR) $(MMS$CHANGED_LIST)
+        $ IF (F$SEARCH("$(MMS$TARGET)").EQS."") THEN -
+             LIBRARY/CREATE $(MMS$TARGET)
+        $ LIBRARY/REPLACE $(MMS$TARGET) $(BLD_DIR)*.OBJ
+        $ DELETE/NOLOG/NOCONFIRM $(BLD_DIR)*.OBJ;*
+
 $(ALTAIR_LIB) : $(ALTAIR_SOURCE)
         $!
         $! Building The $(ALTAIR_LIB) Library.
@@ -996,6 +1067,10 @@ $(ALTAIR_LIB) : $(ALTAIR_SOURCE)
         $ LIBRARY/REPLACE $(MMS$TARGET) $(BLD_DIR)*.OBJ
         $ DELETE/NOLOG/NOCONFIRM $(BLD_DIR)*.OBJ;*
 
+#
+# If Not On VAX, Build The AltairZ80 Library.
+#
+.IFDEF ALPHA_OR_IA64
 $(ALTAIRZ80_LIB1) : $(ALTAIRZ80_SOURCE1)
         $!
         $! Building The $(ALTAIRZ80_LIB1) Library.
@@ -1017,6 +1092,18 @@ $(ALTAIRZ80_LIB2) : $(ALTAIRZ80_SOURCE2)
              LIBRARY/CREATE $(MMS$TARGET)
         $ LIBRARY/REPLACE $(MMS$TARGET) $(BLD_DIR)*.OBJ
         $ DELETE/NOLOG/NOCONFIRM $(BLD_DIR)*.OBJ;*
+.ELSE
+#
+# We Are On VAX And Due To The Use of INT64 We Can't Build It.
+#
+$(ALTAIRZ80_LIB1) :
+        $! Due To The Use Of INT64 We Can't Build The
+        $! $(MMS$TARGET) Library On VAX.
+
+$(ALTAIRZ80_LIB2) :
+        $! Due To The Use Of INT64 We Can't Build The
+        $! $(MMS$TARGET) Library On VAX.
+.ENDIF
 
 #
 # If Not On VAX, Build The Eclipse Library.
@@ -1090,6 +1177,28 @@ $(HP2100_LIB2) : $(HP2100_SOURCE2)
         $! Building The $(HP2100_LIB2) Library.
         $!
         $ $(CC)$(HP2100_OPTIONS) -
+               /OBJ=$(BLD_DIR) $(MMS$CHANGED_LIST)
+        $ IF (F$SEARCH("$(MMS$TARGET)").EQS."") THEN -
+             LIBRARY/CREATE $(MMS$TARGET)
+        $ LIBRARY/REPLACE $(MMS$TARGET) $(BLD_DIR)*.OBJ
+        $ DELETE/NOLOG/NOCONFIRM $(BLD_DIR)*.OBJ;*
+
+$(HP3000_LIB1) : $(HP3000_SOURCE1)
+        $!
+        $! Building The $(HP3000_LIB1) Library.
+        $!
+        $ $(CC)$(HP3000_OPTIONS) -
+               /OBJ=$(BLD_DIR) $(MMS$CHANGED_LIST)
+        $ IF (F$SEARCH("$(MMS$TARGET)").EQS."") THEN -
+             LIBRARY/CREATE $(MMS$TARGET)
+        $ LIBRARY/REPLACE $(MMS$TARGET) $(BLD_DIR)*.OBJ
+        $ DELETE/NOLOG/NOCONFIRM $(BLD_DIR)*.OBJ;*
+
+$(HP3000_LIB2) : $(HP3000_SOURCE2)
+        $!
+        $! Building The $(HP3000_LIB2) Library.
+        $!
+        $ $(CC)$(HP3000_OPTIONS) -
                /OBJ=$(BLD_DIR) $(MMS$CHANGED_LIST)
         $ IF (F$SEARCH("$(MMS$TARGET)").EQS."") THEN -
              LIBRARY/CREATE $(MMS$TARGET)
@@ -1328,6 +1437,10 @@ $(SWTP6800MP_A2_LIB) : $(SWTP6800MP_A2_SOURCE)
         $ LIBRARY/REPLACE $(MMS$TARGET) $(BLD_DIR)*.OBJ
         $ DELETE/NOLOG/NOCONFIRM $(BLD_DIR)*.OBJ;*
 
+#
+# If Not On VAX, Build The BESM6 Library.
+#
+.IFDEF ALPHA_OR_IA64
 $(BESM6_LIB) : $(BESM6_SOURCE)
         $!
         $! Building The $(BESM6_LIB) Library.
@@ -1338,12 +1451,65 @@ $(BESM6_LIB) : $(BESM6_SOURCE)
              LIBRARY/CREATE $(MMS$TARGET)
         $ LIBRARY/REPLACE $(MMS$TARGET) $(BLD_DIR)*.OBJ
         $ DELETE/NOLOG/NOCONFIRM $(BLD_DIR)*.OBJ;*
+.ELSE
+#
+# We Are On VAX And Due To The Use of INT64 We Can't Build It.
+#
+$(BESM6_LIB) : 
+        $! Due To The Use Of INT64 We Can't Build The
+        $! $(MMS$TARGET) Library On VAX.
+.ENDIF
+
+#
+# If Not On VAX, Build The Burroughs B5500 Library.
+#
+.IFDEF ALPHA_OR_IA64
+$(B5500_LIB) : $(B5500_SOURCE)
+        $!
+        $! Building The $(B5500_LIB) Library.
+        $!
+        $ $(CC)$(B5500_OPTIONS) -
+               /OBJ=$(BLD_DIR) $(MMS$CHANGED_LIST)
+        $ IF (F$SEARCH("$(MMS$TARGET)").EQS."") THEN -
+             LIBRARY/CREATE $(MMS$TARGET)
+        $ LIBRARY/REPLACE $(MMS$TARGET) $(BLD_DIR)*.OBJ
+        $ DELETE/NOLOG/NOCONFIRM $(BLD_DIR)*.OBJ;*
+.ELSE
+#
+# We Are On VAX And Due To The Use of INT64 We Can't Build It.
+#
+$(B5500_LIB) : 
+        $! Due To The Use Of INT64 We Can't Build The
+        $! $(MMS$TARGET) Library On VAX.
+.ENDIF
+
+#
+# If Not On VAX, Build The CDC 1700 Library.
+#
+.IFDEF ALPHA_OR_IA64
+$(CDC1700_LIB) : $(CDC1700_SOURCE)
+        $!
+        $! Building The $(CDC1700_LIB) Library.
+        $!
+        $ $(CC)$(CDC1700_OPTIONS) -
+               /OBJ=$(BLD_DIR) $(MMS$CHANGED_LIST)
+        $ IF (F$SEARCH("$(MMS$TARGET)").EQS."") THEN -
+             LIBRARY/CREATE $(MMS$TARGET)
+        $ LIBRARY/REPLACE $(MMS$TARGET) $(BLD_DIR)*.OBJ
+        $ DELETE/NOLOG/NOCONFIRM $(BLD_DIR)*.OBJ;*
+.ELSE
+#
+# We Are On VAX And Due To The Use of INT64 We Can't Build It.
+#
+$(CDC1700_LIB) : 
+        $! Due To The Use Of INT64 We Can't Build The
+        $! $(MMS$TARGET) Library On VAX.
+.ENDIF
 
 $(VAX_LIB1) : $(VAX_SOURCE1)
         $!
         $! Building The $(VAX_LIB1) Library.
         $!
-        $ RUN/NODEBUG $(BIN_DIR)BuildROMs-$(ARCH).EXE
         $ $(CC)$(VAX_OPTIONS)/OBJ=$(VAX_DIR) -
                /OBJ=$(BLD_DIR) $(MMS$CHANGED_LIST)
         $ IF (F$SEARCH("$(MMS$TARGET)").EQS."") THEN -
@@ -1366,7 +1532,6 @@ $(VAX610_LIB1) : $(VAX610_SOURCE1)
         $!
         $! Building The $(VAX610_LIB1) Library.
         $!
-        $ RUN/NODEBUG $(BIN_DIR)BuildROMs-$(ARCH).EXE
         $ $(CC)$(VAX610_OPTIONS)/OBJ=$(VAX610_DIR) -
                /OBJ=$(BLD_DIR) $(MMS$CHANGED_LIST)
         $ IF (F$SEARCH("$(MMS$TARGET)").EQS."") THEN -
@@ -1389,7 +1554,6 @@ $(VAX630_LIB1) : $(VAX630_SOURCE1)
         $!
         $! Building The $(VAX630_LIB1) Library.
         $!
-        $ RUN/NODEBUG $(BIN_DIR)BuildROMs-$(ARCH).EXE
         $ $(CC)$(VAX630_OPTIONS)/OBJ=$(VAX630_DIR) -
                /OBJ=$(BLD_DIR) $(MMS$CHANGED_LIST)
         $ IF (F$SEARCH("$(MMS$TARGET)").EQS."") THEN -
@@ -1412,7 +1576,6 @@ $(VAX620_LIB1) : $(VAX620_SOURCE1)
         $!
         $! Building The $(VAX620_LIB1) Library.
         $!
-        $ RUN/NODEBUG $(BIN_DIR)BuildROMs-$(ARCH).EXE
         $ $(CC)$(VAX620_OPTIONS)/OBJ=$(VAX620_DIR) -
                /OBJ=$(BLD_DIR) $(MMS$CHANGED_LIST)
         $ IF (F$SEARCH("$(MMS$TARGET)").EQS."") THEN -
@@ -1435,7 +1598,6 @@ $(VAX730_LIB1) : $(VAX730_SOURCE1)
         $!
         $! Building The $(VAX730_LIB1) Library.
         $!
-        $ RUN/NODEBUG $(BIN_DIR)BuildROMs-$(ARCH).EXE
         $ $(CC)$(VAX730_OPTIONS)/OBJ=$(VAX730_DIR) -
                /OBJ=$(BLD_DIR) $(MMS$CHANGED_LIST)
         $ IF (F$SEARCH("$(MMS$TARGET)").EQS."") THEN -
@@ -1458,7 +1620,6 @@ $(VAX750_LIB1) : $(VAX750_SOURCE1)
         $!
         $! Building The $(VAX750_LIB1) Library.
         $!
-        $ RUN/NODEBUG $(BIN_DIR)BuildROMs-$(ARCH).EXE
         $ $(CC)$(VAX750_OPTIONS)/OBJ=$(VAX750_DIR) -
                /OBJ=$(BLD_DIR) $(MMS$CHANGED_LIST)
         $ IF (F$SEARCH("$(MMS$TARGET)").EQS."") THEN -
@@ -1481,7 +1642,6 @@ $(VAX780_LIB1) : $(VAX780_SOURCE1)
         $!
         $! Building The $(VAX780_LIB1) Library.
         $!
-        $ RUN/NODEBUG $(BIN_DIR)BuildROMs-$(ARCH).EXE
         $ $(CC)$(VAX780_OPTIONS)/OBJ=$(VAX780_DIR) -
                /OBJ=$(BLD_DIR) $(MMS$CHANGED_LIST)
         $ IF (F$SEARCH("$(MMS$TARGET)").EQS."") THEN -
@@ -1504,7 +1664,6 @@ $(VAX8600_LIB1) : $(VAX8600_SOURCE1)
         $!
         $! Building The $(VAX8600_LIB1) Library.
         $!
-        $ RUN/NODEBUG $(BIN_DIR)BuildROMs-$(ARCH).EXE
         $ $(CC)$(VAX8600_OPTIONS)/OBJ=$(VAX8600_DIR) -
                /OBJ=$(BLD_DIR) $(MMS$CHANGED_LIST)
         $ IF (F$SEARCH("$(MMS$TARGET)").EQS."") THEN -
@@ -1562,6 +1721,33 @@ $(I7094_LIB) :
 #
 # Individual Simulator Builds.
 #
+
+#
+# If Not On VAX, Build The AT&T 3B2 Simulator.
+#
+.IFDEF ALPHA_OR_IA64
+ATT3B2 : $(BIN_DIR)ATT3B2-$(ARCH).EXE
+        $! ATT3B2 aka 3B2 done
+.ELSE
+#
+# Else We Are On VAX And Tell The User We Can't Build On VAX
+# Due To The Use Of INT64.
+#
+ATT3B2 : 
+        $! Sorry, Can't Build $(BIN_DIR)ATT3B2-$(ARCH).EXE Simulator
+        $! Because It Requires The Use Of INT64.
+.ENDIF
+
+$(BIN_DIR)ATT3B2-$(ARCH).EXE : $(SIMH_MAIN) $(SIMH_NONET_LIB) $(ATT3B2_LIB)
+        $!
+        $! Building The $(BIN_DIR)ATT3B2-$(ARCH).EXE Simulator.
+        $!
+        $ $(CC)$(ATT3B2_OPTIONS)/OBJ=$(BLD_DIR) SCP.C
+        $ LINK $(LINK_DEBUG)/EXE=$(BIN_DIR)ATT3B2-$(ARCH).EXE -
+               $(BLD_DIR)SCP.OBJ,$(ATT3B2_LIB)/LIBRARY,$(SIMH_NONET_LIB)/LIBRARY
+        $ DELETE/NOLOG/NOCONFIRM $(BLD_DIR)*.OBJ;*
+        $ COPY $(BIN_DIR)ATT3B2-$(ARCH).EXE $(BIN_DIR)3B2-$(ARCH).EXE
+
 ALTAIR : $(BIN_DIR)ALTAIR-$(ARCH).EXE
         $! ALTAIR done
 
@@ -1574,8 +1760,21 @@ $(BIN_DIR)ALTAIR-$(ARCH).EXE : $(SIMH_MAIN) $(SIMH_NONET_LIB) $(ALTAIR_LIB)
                $(BLD_DIR)SCP.OBJ,$(ALTAIR_LIB)/LIBRARY,$(SIMH_NONET_LIB)/LIBRARY
         $ DELETE/NOLOG/NOCONFIRM $(BLD_DIR)*.OBJ;*
 
+#
+# If Not On VAX, Build The AltairZ80 Simulator.
+#
+.IFDEF ALPHA_OR_IA64
 ALTAIRZ80 : $(BIN_DIR)ALTAIRZ80-$(ARCH).EXE
         $! ALTAIRZ80 done
+.ELSE
+#
+# Else We Are On VAX And Tell The User We Can't Build On VAX
+# Due To The Use Of INT64.
+#
+ALTAIRZ80 : 
+        $! Sorry, Can't Build $(BIN_DIR)ALTAIRZ80-$(ARCH).EXE Simulator
+        $! Because It Requires The Use Of INT64.
+.ENDIF
 
 $(BIN_DIR)ALTAIRZ80-$(ARCH).EXE : $(SIMH_MAIN) $(SIMH_NONET_LIB) $(ALTAIRZ80_LIB1) $(ALTAIRZ80_LIB2)
         $!
@@ -1586,6 +1785,7 @@ $(BIN_DIR)ALTAIRZ80-$(ARCH).EXE : $(SIMH_MAIN) $(SIMH_NONET_LIB) $(ALTAIRZ80_LIB
                $(BLD_DIR)SCP.OBJ,$(ALTAIRZ80_LIB1)/LIBRARY, -
                $(ALTAIRZ80_LIB2)/LIBRARY,$(SIMH_NONET_LIB)/LIBRARY
         $ DELETE/NOLOG/NOCONFIRM $(BLD_DIR)*.OBJ;*
+
 #
 # If Not On VAX, Build The Eclipse Simulator.
 #
@@ -1658,6 +1858,19 @@ $(BIN_DIR)HP2100-$(ARCH).EXE : $(SIMH_MAIN) $(SIMH_NONET_LIB) $(HP2100_LIB1) $(H
         $ LINK $(LINK_DEBUG)/EXE=$(BIN_DIR)HP2100-$(ARCH).EXE -
                $(BLD_DIR)SCP.OBJ,$(HP2100_LIB1)/LIBRARY, -
                $(HP2100_LIB2)/LIBRARY,$(SIMH_NONET_LIB)/LIBRARY
+        $ DELETE/NOLOG/NOCONFIRM $(BLD_DIR)*.OBJ;*
+
+HP3000 : $(BIN_DIR)HP3000-$(ARCH).EXE
+        $! HP3000 done
+
+$(BIN_DIR)HP3000-$(ARCH).EXE : $(SIMH_MAIN) $(SIMH_NONET_LIB) $(HP3000_LIB1) $(HP3000_LIB2)
+        $!
+        $! Building The $(BIN_DIR)HP3000-$(ARCH).EXE Simulator.
+        $!
+        $ $(CC)$(HP3000_OPTIONS)/OBJ=$(BLD_DIR) SCP.C
+        $ LINK $(LINK_DEBUG)/EXE=$(BIN_DIR)HP3000-$(ARCH).EXE -
+               $(BLD_DIR)SCP.OBJ,$(HP3000_LIB1)/LIBRARY, -
+               $(HP3000_LIB2)/LIBRARY,$(SIMH_NONET_LIB)/LIBRARY
         $ DELETE/NOLOG/NOCONFIRM $(BLD_DIR)*.OBJ;*
 
 I1401 : $(BIN_DIR)I1401-$(ARCH).EXE
@@ -1884,7 +2097,6 @@ $(BIN_DIR)SWTP6800MP-A-$(ARCH).EXE : $(SIMH_MAIN) $(SIMH_NONET_LIB) $(SWTP6800MP
         $!
         $! Building The $(BIN_DIR)SWTP6800MP-A-$(ARCH).EXE Simulator.
         $!
-        $ RUN/NODEBUG $(BIN_DIR)BuildROMs-$(ARCH).EXE
         $ $(CC)$(SWTP6800MP_A_OPTIONS)/OBJ=$(BLD_DIR) SCP.C
         $ LINK $(LINK_DEBUG)/EXE=$(BIN_DIR)SWTP6800MP-A-$(ARCH).EXE -
                $(BLD_DIR)SCP.OBJ,$(SWTP6800MP_A_LIB)/LIBRARY,$(SIMH_NONET_LIB)/LIBRARY
@@ -1897,12 +2109,15 @@ $(BIN_DIR)SWTP6800MP-A2-$(ARCH).EXE : $(SIMH_MAIN) $(SIMH_NONET_LIB) $(SWTP6800M
         $!
         $! Building The $(BIN_DIR)SWTP6800MP-A2-$(ARCH).EXE Simulator.
         $!
-        $ RUN/NODEBUG $(BIN_DIR)BuildROMs-$(ARCH).EXE
         $ $(CC)$(SWTP6800MP_A2_OPTIONS)/OBJ=$(BLD_DIR) SCP.C
         $ LINK $(LINK_DEBUG)/EXE=$(BIN_DIR)SWTP6800MP-A2-$(ARCH).EXE -
                $(BLD_DIR)SCP.OBJ,$(SWTP6800MP_A2_LIB)/LIBRARY,$(SIMH_NONET_LIB)/LIBRARY
         $ DELETE/NOLOG/NOCONFIRM $(BLD_DIR)*.OBJ;*
 
+#
+# If Not On VAX, Build The BESM6 Simulator.
+#
+.IFDEF ALPHA_OR_IA64
 BESM6 : $(BIN_DIR)BESM6-$(ARCH).EXE
         $! BESM6 done
 
@@ -1914,6 +2129,67 @@ $(BIN_DIR)BESM6-$(ARCH).EXE : $(SIMH_MAIN) $(SIMH_NONET_LIB) $(BESM6_LIB)
         $ LINK $(LINK_DEBUG)/EXE=$(BIN_DIR)BESM6-$(ARCH).EXE -
                  $(BLD_DIR)SCP.OBJ,$(BESM6_LIB)/LIBRARY,$(SIMH_NONET_LIB)/LIBRARY
         $ DELETE/NOLOG/NOCONFIRM $(BLD_DIR)*.OBJ;*
+.ELSE
+#
+# Else We Are On VAX And Tell The User We Can't Build On VAX
+# Due To The Use Of INT64.
+#
+BESM6 : 
+        $! Sorry, Can't Build $(BIN_DIR)BESM6-$(ARCH).EXE Simulator
+        $! Because It Requires The Use Of INT64.
+.ENDIF
+
+
+#
+# If Not On VAX, Build The Burroughs B5500 Simulator.
+#
+.IFDEF ALPHA_OR_IA64
+B5500 : $(BIN_DIR)B5500-$(ARCH).EXE
+        $! B5500 done
+
+$(BIN_DIR)B5500-$(ARCH).EXE : $(SIMH_MAIN) $(SIMH_NONET_LIB) $(B5500_LIB)
+        $!
+        $! Building The $(BIN_DIR)B5500-$(ARCH).EXE Simulator.
+        $!
+        $ $(CC)$(B5500_OPTIONS)/OBJ=$(BLD_DIR) SCP.C
+        $ LINK $(LINK_DEBUG)/EXE=$(BIN_DIR)B5500-$(ARCH).EXE -
+                 $(BLD_DIR)SCP.OBJ,$(B5500_LIB)/LIBRARY,$(SIMH_NONET_LIB)/LIBRARY
+        $ DELETE/NOLOG/NOCONFIRM $(BLD_DIR)*.OBJ;*
+.ELSE
+#
+# Else We Are On VAX And Tell The User We Can't Build On VAX
+# Due To The Use Of INT64.
+#
+B5500 : 
+        $! Sorry, Can't Build $(BIN_DIR)B5500-$(ARCH).EXE Simulator
+        $! Because It Requires The Use Of INT64.
+.ENDIF
+
+
+#
+# If Not On VAX, Build The Burroughs B5500 Simulator.
+#
+.IFDEF ALPHA_OR_IA64
+CDC1700 : $(BIN_DIR)CDC1700-$(ARCH).EXE
+        $! CDC1700 done
+
+$(BIN_DIR)CDC1700-$(ARCH).EXE : $(SIMH_MAIN) $(SIMH_NONET_LIB) $(CDC1700_LIB)
+        $!
+        $! Building The $(BIN_DIR)CDC1700-$(ARCH).EXE Simulator.
+        $!
+        $ $(CC)$(CDC1700_OPTIONS)/OBJ=$(BLD_DIR) SCP.C
+        $ LINK $(LINK_DEBUG)/EXE=$(BIN_DIR)CDC1700-$(ARCH).EXE -
+                 $(BLD_DIR)SCP.OBJ,$(CDC1700_LIB)/LIBRARY,$(SIMH_NONET_LIB)/LIBRARY
+        $ DELETE/NOLOG/NOCONFIRM $(BLD_DIR)*.OBJ;*
+.ELSE
+#
+# Else We Are On VAX And Tell The User We Can't Build On VAX
+# Due To The Use Of INT64.
+#
+CDC1700 : 
+        $! Sorry, Can't Build $(BIN_DIR)CDC1700-$(ARCH).EXE Simulator
+        $! Because It Requires The Use Of INT64.
+.ENDIF
 
 VAX : MICROVAX3900
         $! MICROVAX3900 aka VAX done

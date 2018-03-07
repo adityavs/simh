@@ -45,17 +45,14 @@
 
 #if defined (VM_PDP10)                                  /* PDP10 version */
 #include "pdp10_defs.h"
-extern int32 int_req;
 #define DEV_DISI        DEV_DIS
 
 #elif defined (VM_VAX)                                  /* VAX version */
 #include "vax_defs.h"
-extern int32 int_req[IPL_HLVL];
 #define DEV_DISI        0
 
 #else                                                   /* PDP-11 version */
 #include "pdp11_defs.h"
-extern int32 int_req[IPL_HLVL];
 #define DEV_DISI        DEV_DIS
 #endif
 
@@ -163,8 +160,8 @@ t_stat ry_svc (UNIT *uptr);
 t_stat ry_reset (DEVICE *dptr);
 t_stat ry_boot (int32 unitno, DEVICE *dptr);
 void ry_done (int32 esr_flags, uint8 new_ecode);
-t_stat ry_set_size (UNIT *uptr, int32 val, char *cptr, void *desc);
-t_stat ry_attach (UNIT *uptr, char *cptr);
+t_stat ry_set_size (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+t_stat ry_attach (UNIT *uptr, CONST char *cptr);
 t_stat ry_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr);
 const char *ry_description (DEVICE *dptr);
 
@@ -595,7 +592,7 @@ return auto_config (dptr->name, 1);                     /* run autoconfig */
 
 /* Attach routine */
 
-t_stat ry_attach (UNIT *uptr, char *cptr)
+t_stat ry_attach (UNIT *uptr, CONST char *cptr)
 {
 uint32 sz;
 
@@ -610,7 +607,7 @@ return attach_unit (uptr, cptr);
 
 /* Set size routine */
 
-t_stat ry_set_size (UNIT *uptr, int32 val, char *cptr, void *desc)
+t_stat ry_set_size (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 {
 if (uptr->flags & UNIT_ATT)
     return SCPE_ALATT;
@@ -692,7 +689,6 @@ static const uint16 boot_rom[] = {
 t_stat ry_boot (int32 unitno, DEVICE *dptr)
 {
 size_t i;
-extern uint16 *M;
 
 if ((ry_unit[unitno & RX_M_NUMDR].flags & UNIT_DEN) == 0)
     return SCPE_NOFNC;

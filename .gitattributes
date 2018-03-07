@@ -3,8 +3,10 @@
 *.sln binary
 *.vcproj binary
 *.exe binary
+*.lda binary
 *.bin binary
 *.imd binary
 *.rim binary
+*.tap binary
 sim_rev.h export-subst
 

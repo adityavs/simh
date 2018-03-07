@@ -36,9 +36,6 @@
 				Name="VCXMLDataGeneratorTool"
 			/>
 			<Tool
-				Name="VCWebServiceProxyGeneratorTool"
-			/>
-			<Tool
 				Name="VCMIDLTool"
 			/>
 			<Tool
@@ -118,9 +115,6 @@
 			/>
 			<Tool
 				Name="VCXMLDataGeneratorTool"
-			/>
-			<Tool
-				Name="VCWebServiceProxyGeneratorTool"
 			/>
 			<Tool
 				Name="VCMIDLTool"
@@ -219,11 +213,19 @@
 				>
 			</File>
 			<File
+				RelativePath="..\Intel-Systems\common\isbc201.c"
+				>
+			</File>
+			<File
+				RelativePath="..\Intel-Systems\common\isbc202.c"
+				>
+			</File>
+			<File
 				RelativePath="..\Intel-Systems\common\isbc208.c"
 				>
 			</File>
 			<File
-				RelativePath="..\Intel-Systems\common\iSBC80-10.c"
+				RelativePath="..\Intel-Systems\isys8010\isbc8010.c"
 				>
 			</File>
 			<File
@@ -272,6 +274,14 @@
 			</File>
 			<File
 				RelativePath="..\sim_tmxr.c"
+				>
+			</File>
+			<File
+				RelativePath="..\sim_video.c"
+				>
+			</File>
+			<File
+				RelativePath="..\Intel-Systems\common\zx200a.c"
 				>
 			</File>
 		</Filter>
@@ -325,6 +335,10 @@
 			</File>
 			<File
 				RelativePath="..\sim_tmxr.h"
+				>
+			</File>
+			<File
+				RelativePath="..\sim_video.h"
 				>
 			</File>
 			<File

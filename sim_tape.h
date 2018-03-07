@@ -23,6 +23,11 @@
    used in advertising or otherwise to promote the sale, use or other dealings
    in this Software without prior written authorization from Robert M Supnik.
 
+   18-Jul-16    JDB     Added sim_tape_errecf, sim_tape_errecr functions
+   15-Dec-14    JDB     Added tape density validity flags
+   04-Nov-14    JDB     Added tape density flags
+   11-Oct-14    JDB     Added reverse read half gap, set/show density
+   22-Sep-14    JDB     Added tape runaway support
    23-Jan-12    MP      Added support for Logical EOT detection while positioning
    05-Feb-11    MP      Add Asynch I/O support
    30-Aug-06    JDB     Added erase gap support
@@ -33,6 +38,10 @@
 
 #ifndef SIM_TAPE_H_
 #define SIM_TAPE_H_    0
+
+#ifdef  __cplusplus
+extern "C" {
+#endif
 
 /* SIMH/E11 tape format */
 
@@ -148,8 +157,8 @@ typedef void (*TAPE_PCALLBACK)(UNIT *unit, t_stat status);
 
 /* Prototypes */
 
-t_stat sim_tape_attach_ex (UNIT *uptr, char *cptr, uint32 dbit, int completion_delay);
-t_stat sim_tape_attach (UNIT *uptr, char *cptr);
+t_stat sim_tape_attach_ex (UNIT *uptr, const char *cptr, uint32 dbit, int completion_delay);
+t_stat sim_tape_attach (UNIT *uptr, CONST char *cptr);
 t_stat sim_tape_detach (UNIT *uptr);
 t_stat sim_tape_attach_help(FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr);
 t_stat sim_tape_rdrecf (UNIT *uptr, uint8 *buf, t_mtrlnt *bc, t_mtrlnt max);
@@ -166,6 +175,8 @@ t_stat sim_tape_wreomrw (UNIT *uptr);
 t_stat sim_tape_wreomrw_a (UNIT *uptr, TAPE_PCALLBACK callback);
 t_stat sim_tape_wrgap (UNIT *uptr, uint32 gaplen);
 t_stat sim_tape_wrgap_a (UNIT *uptr, uint32 gaplen, TAPE_PCALLBACK callback);
+t_stat sim_tape_errecf (UNIT *uptr, t_mtrlnt bc);
+t_stat sim_tape_errecr (UNIT *uptr, t_mtrlnt bc);
 t_stat sim_tape_sprecf (UNIT *uptr, t_mtrlnt *bc);
 t_stat sim_tape_sprecf_a (UNIT *uptr, t_mtrlnt *bc, TAPE_PCALLBACK callback);
 t_stat sim_tape_sprecsf (UNIT *uptr, uint32 count, uint32 *skipped);
@@ -190,13 +201,17 @@ t_stat sim_tape_reset (UNIT *uptr);
 t_bool sim_tape_bot (UNIT *uptr);
 t_bool sim_tape_wrp (UNIT *uptr);
 t_bool sim_tape_eot (UNIT *uptr);
-t_stat sim_tape_set_fmt (UNIT *uptr, int32 val, char *cptr, void *desc);
-t_stat sim_tape_show_fmt (FILE *st, UNIT *uptr, int32 val, void *desc);
-t_stat sim_tape_set_capac (UNIT *uptr, int32 val, char *cptr, void *desc);
-t_stat sim_tape_show_capac (FILE *st, UNIT *uptr, int32 val, void *desc);
-t_stat sim_tape_set_dens (UNIT *uptr, int32 val, char *cptr, void *desc);
-t_stat sim_tape_show_dens (FILE *st, UNIT *uptr, int32 val, void *desc);
+t_stat sim_tape_set_fmt (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+t_stat sim_tape_show_fmt (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+t_stat sim_tape_set_capac (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+t_stat sim_tape_show_capac (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+t_stat sim_tape_set_dens (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+t_stat sim_tape_show_dens (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 t_stat sim_tape_set_asynch (UNIT *uptr, int latency);
 t_stat sim_tape_clr_asynch (UNIT *uptr);
+
+#ifdef  __cplusplus
+}
+#endif
 
 #endif

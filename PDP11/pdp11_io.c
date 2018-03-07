@@ -51,23 +51,16 @@
 
 #include "pdp11_defs.h"
 
-extern uint16 *M;
-extern int32 int_req[IPL_HLVL];
 extern int32 ub_map[UBM_LNT_LW];
-extern uint32 cpu_opt;
-extern int32 cpu_bme;
 extern int32 trap_req, ipl;
-extern int32 cpu_log;
-extern int32 autcon_enb;
 extern int32 uba_last;
-extern DEVICE cpu_dev;
-extern t_addr cpu_memsize;
 
 int32 calc_ints (int32 nipl, int32 trq);
 
 extern t_stat cpu_build_dib (void);
 extern void init_mbus_tab (void);
 extern t_stat build_mbus_tab (DEVICE *dptr, DIB *dibp);
+extern void fixup_mbus_tab (void);
 
 /* I/O data structures */
 
@@ -157,7 +150,8 @@ for (i = IPL_HLVL - 1; i > nipl; i--) {                 /* loop thru lvls */
             int_req[i] = int_req[i] & ~(1u << j);       /* clr irq */
             if (int_ack[i][j])
                 vec = int_ack[i][j]();
-            else vec = int_vec[i][j];
+            else
+                vec = int_vec[i][j];
             return vec;                                 /* return vector */
             }                                           /* end if t */
         }                                               /* end for j */
@@ -262,9 +256,7 @@ if (cpu_bme) {                                          /* map enabled? */
         ma = Map_Addr (ba);                             /* map addr */
         if (!ADDR_IS_MEM (ma))                          /* NXM? err */
             return (lim - ba);
-        if (ma & 1)                                     /* get byte */
-            *buf++ = (M[ma >> 1] >> 8) & 0377;
-        else *buf++ = M[ma >> 1] & 0377;
+        *buf++ = (uint8) RdMemB (ma);                   /* get byte */
         }
     return 0;
     }
@@ -272,12 +264,10 @@ else {                                                  /* physical */
     if (ADDR_IS_MEM (lim))                              /* end ok? */
         alim = lim;
     else if (ADDR_IS_MEM (ba))                          /* no, strt ok? */
-        alim = cpu_memsize;
+        alim = MEMSIZE;
     else return bc;                                     /* no, err */
     for ( ; ba < alim; ba++) {                          /* by bytes */
-        if (ba & 1)
-            *buf++ = (M[ba >> 1] >> 8) & 0377;          /* get byte */
-        else *buf++ = M[ba >> 1] & 0377;
+        *buf++ = (uint8) RdMemB (ba);                   /* get byte */
         }
     return (lim - alim);
     }
@@ -307,7 +297,7 @@ if (cpu_bme) {                                          /* map enabled? */
         ma = Map_Addr (ba);                             /* map addr */
         if (!ADDR_IS_MEM (ma))                          /* NXM? err */
             return (lim - ba);
-        *buf++ = M[ma >> 1];
+        *buf++ = (uint16) RdMemW (ma);
         }
     return 0;
     }
@@ -315,16 +305,16 @@ else {                                                  /* physical */
     if (ADDR_IS_MEM (lim))                              /* end ok? */
         alim = lim;
     else if (ADDR_IS_MEM (ba))                          /* no, strt ok? */
-        alim = cpu_memsize;
+        alim = MEMSIZE;
     else return bc;                                     /* no, err */
     for ( ; ba < alim; ba = ba + 2) {                   /* by words */
-        *buf++ = M[ba >> 1];
+        *buf++ = (uint16) RdMemW (ba);
         }
     return (lim - alim);
     }
 }
 
-int32 Map_WriteB (uint32 ba, int32 bc, uint8 *buf)
+int32 Map_WriteB (uint32 ba, int32 bc, const uint8 *buf)
 {
 uint32 alim, lim, ma;
 
@@ -344,9 +334,7 @@ if (cpu_bme) {                                          /* map enabled? */
         ma = Map_Addr (ba);                             /* map addr */
         if (!ADDR_IS_MEM (ma))                          /* NXM? err */
             return (lim - ba);
-        if (ma & 1) M[ma >> 1] = (M[ma >> 1] & 0377) |
-            ((uint16) *buf++ << 8);
-        else M[ma >> 1] = (M[ma >> 1] & ~0377) | *buf++;
+        WrMemB (ma, ((uint16) *buf++));
         }
     return 0;
     }
@@ -354,18 +342,16 @@ else {                                                  /* physical */
     if (ADDR_IS_MEM (lim))                              /* end ok? */
         alim = lim;
     else if (ADDR_IS_MEM (ba))                          /* no, strt ok? */
-        alim = cpu_memsize;
+        alim = MEMSIZE;
     else return bc;                                     /* no, err */
     for ( ; ba < alim; ba++) {                          /* by bytes */
-        if (ba & 1)
-            M[ba >> 1] = (M[ba >> 1] & 0377) | ((uint16) *buf++ << 8);
-        else M[ba >> 1] = (M[ba >> 1] & ~0377) | *buf++;
+        WrMemB (ba, ((uint16) *buf++));
         }
     return (lim - alim);
     }
 }
 
-int32 Map_WriteW (uint32 ba, int32 bc, uint16 *buf)
+int32 Map_WriteW (uint32 ba, int32 bc, const uint16 *buf)
 {
 uint32 alim, lim, ma;
 
@@ -387,7 +373,7 @@ if (cpu_bme) {                                          /* map enabled? */
         ma = Map_Addr (ba);                             /* map addr */
         if (!ADDR_IS_MEM (ma))                          /* NXM? err */
             return (lim - ba);
-        M[ma >> 1] = *buf++;
+        WrMemW (ma, *buf++);
         }
     return 0;
     }
@@ -395,10 +381,10 @@ else {                                                  /* physical */
     if (ADDR_IS_MEM (lim))                              /* end ok? */
         alim = lim;
     else if (ADDR_IS_MEM (ba))                          /* no, strt ok? */
-        alim = cpu_memsize;
+        alim = MEMSIZE;
     else return bc;                                     /* no, err */
     for ( ; ba < alim; ba = ba + 2) {                   /* by words */
-        M[ba >> 1] = *buf++;
+        WrMemW (ba, *buf++);
         }
     return (lim - alim);
     }

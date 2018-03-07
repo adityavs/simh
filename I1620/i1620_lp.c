@@ -57,7 +57,7 @@ int32 lpt_savctrl = 0;                                  /* saved spc ctrl */
 
 t_stat lpt_svc (UNIT *uptr);
 t_stat lpt_reset (DEVICE *dptr);
-t_stat lpt_attach (UNIT *uptr, char *cptr);
+t_stat lpt_attach (UNIT *uptr, CONST char *cptr);
 void lpt_buf_init (void);
 t_stat lpt_num(uint32 pa, uint32 f1, t_bool dump);      /* tfm: length parameter removed, not needed */
 t_stat lpt_print (void);
@@ -77,17 +77,17 @@ UNIT lpt_unit = {
     };
 
 REG lpt_reg[] = {
-    { BRDATA (LBUF, lpt_buf, 8, 8, LPT_BSIZE + 1) },
-    { DRDATA (BPTR, lpt_bptr, 8) },
-    { HRDATA (PCTL, lpt_savctrl, 8) },
-    { FLDATA (PRCHK, ind[IN_PRCHK], 0) },
-    { FLDATA (PRCH9, ind[IN_PRCH9], 0) },
-    { FLDATA (PRCH12, ind[IN_PRCH12], 0) },
-    { FLDATA (PRBSY, ind[IN_PRBSY], 0) },
-    { DRDATA (POS, lpt_unit.pos, T_ADDR_W), PV_LEFT },
-    { BRDATA (CCT, cct, 8, 32, CCT_LNT) },
-    { DRDATA (CCTP, cct_ptr, 8), PV_LEFT },
-    { DRDATA (CCTL, cct_lnt, 8), REG_RO + PV_LEFT },
+    { BRDATAD (LBUF, lpt_buf, 8, 8, LPT_BSIZE + 1, "line buffer") },
+    { DRDATAD (BPTR, lpt_bptr, 8, "buffer pointer") },
+    { HRDATAD (PCTL, lpt_savctrl, 8, "saved print control directive") },
+    { FLDATAD (PRCHK, ind[IN_PRCHK], 0, "print check indicator") },
+    { FLDATAD (PRCH9, ind[IN_PRCH9], 0, "channel 9 indicator") },
+    { FLDATAD (PRCH12, ind[IN_PRCH12], 0, "channel 12 indicator") },
+    { FLDATAD (PRBSY, ind[IN_PRBSY], 0, "busy indicator") },
+    { DRDATAD (POS, lpt_unit.pos, T_ADDR_W, "position in the output file"), PV_LEFT },
+    { BRDATAD (CCT, cct, 8, 32, CCT_LNT, "carriage control tape array") },
+    { DRDATAD (CCTP, cct_ptr, 8, "carriage control tape pointer"), PV_LEFT },
+    { DRDATAD (CCTL, cct_lnt, 8, "carriage control tape length (read only)"), REG_RO + PV_LEFT },
     { NULL }
     };
 
@@ -356,7 +356,7 @@ return SCPE_OK;
 
 /* Attach routine */
 
-t_stat lpt_attach (UNIT *uptr, char *cptr)
+t_stat lpt_attach (UNIT *uptr, CONST char *cptr)
 {
 lpt_reset (&lpt_dev);
 return attach_unit (uptr, cptr);

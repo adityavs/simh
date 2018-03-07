@@ -65,6 +65,12 @@ t_bool sim_end;                     /* TRUE = little endian, FALSE = big endian 
 t_bool sim_taddr_64;                /* t_addr is > 32b and Large File Support available */
 t_bool sim_toffset_64;              /* Large File (>2GB) file I/O Support available */
 
+#if defined(fprintf)                /* Make sure to only use the C rtl stream I/O routines */
+#undef fprintf
+#undef fputs
+#undef fputc
+#endif
+
 /* OS-independent, endian independent binary I/O package
 
    For consistency, all binary data read and written by the simulator
@@ -125,11 +131,11 @@ sim_buf_swap_data (bptr, size, count);
 return c;
 }
 
-void sim_buf_copy_swapped (void *dbuf, void *sbuf, size_t size, size_t count)
+void sim_buf_copy_swapped (void *dbuf, const void *sbuf, size_t size, size_t count)
 {
 size_t j;
 int32 k;
-unsigned char *sptr = (unsigned char *)sbuf;
+const unsigned char *sptr = (const unsigned char *)sbuf;
 unsigned char *dptr = (unsigned char *)dbuf;
 
 if (sim_end || (size == sizeof (char))) {
@@ -143,11 +149,11 @@ for (j = 0; j < count; j++) {                           /* loop on items */
     }
 }
 
-size_t sim_fwrite (void *bptr, size_t size, size_t count, FILE *fptr)
+size_t sim_fwrite (const void *bptr, size_t size, size_t count, FILE *fptr)
 {
 size_t c, nelem, nbuf, lcnt, total;
 int32 i;
-unsigned char *sptr;
+const unsigned char *sptr;
 unsigned char *sim_flip;
 
 if ((size == 0) || (count == 0))                        /* check arguments */
@@ -163,7 +169,7 @@ lcnt = count % nelem;                                   /* count in last buf */
 if (lcnt) nbuf = nbuf + 1;
 else lcnt = nelem;
 total = 0;
-sptr = (unsigned char *) bptr;                          /* init input ptr */
+sptr = (const unsigned char *) bptr;                    /* init input ptr */
 for (i = (int32)nbuf; i > 0; i--) {                     /* loop on buffers */
     c = (i == 1)? lcnt: nelem;
     sim_buf_copy_swapped (sim_flip, sptr, size, c);
@@ -198,7 +204,7 @@ sim_fseeko (fp, pos, SEEK_SET);
 return sz;
 }
 
-t_offset sim_fsize_name_ex (char *fname)
+t_offset sim_fsize_name_ex (const char *fname)
 {
 FILE *fp;
 t_offset sz;
@@ -210,7 +216,7 @@ fclose (fp);
 return sz;
 }
 
-uint32 sim_fsize_name (char *fname)
+uint32 sim_fsize_name (const char *fname)
 {
 return (uint32)(sim_fsize_name_ex (fname));
 }
@@ -334,7 +340,7 @@ return (t_offset)(ftello64 (st));
 
 /* Apple OS/X */
 
-#if defined (__APPLE__) || defined (__FreeBSD__) || defined(__NetBSD__) || defined (__OpenBSD__) 
+#if defined (__APPLE__) || defined (__FreeBSD__) || defined(__NetBSD__) || defined (__OpenBSD__) || defined (__CYGWIN__) 
 #define S_SIM_IO_FSEEK_EXT_ 1
 int sim_fseeko (FILE *st, t_offset xpos, int origin) 
 {
@@ -369,6 +375,34 @@ return sim_fseeko (st, (t_offset)offset, whence);
 }
 
 #if defined(_WIN32)
+const char *
+sim_get_os_error_text (int Error)
+{
+static char szMsgBuffer[2048];
+DWORD dwStatus;
+
+dwStatus = FormatMessageA (FORMAT_MESSAGE_FROM_SYSTEM|
+                           FORMAT_MESSAGE_IGNORE_INSERTS,     //  __in      DWORD dwFlags,
+                           NULL,                              //  __in_opt  LPCVOID lpSource,
+                           Error,                             //  __in      DWORD dwMessageId,
+                           0,                                 //  __in      DWORD dwLanguageId,
+                           szMsgBuffer,                       //  __out     LPTSTR lpBuffer,
+                           sizeof (szMsgBuffer) -1,           //  __in      DWORD nSize,
+                           NULL);                             //  __in_opt  va_list *Arguments
+if (0 == dwStatus)
+    snprintf(szMsgBuffer, sizeof(szMsgBuffer) - 1, "Error Code: 0x%lX", Error);
+while (sim_isspace (szMsgBuffer[strlen (szMsgBuffer)-1]))
+    szMsgBuffer[strlen (szMsgBuffer) - 1] = '\0';
+return szMsgBuffer;
+}
+
+t_stat sim_copyfile (const char *source_file, const char *dest_file, t_bool overwrite_existing)
+{
+if (CopyFileA (source_file, dest_file, !overwrite_existing))
+    return SCPE_OK;
+return sim_messagef (SCPE_ARG, "Error Copying '%s' to '%s': %s\n", source_file, dest_file, sim_get_os_error_text (GetLastError ()));
+}
+
 #include <io.h>
 int sim_set_fsize (FILE *fptr, t_addr size)
 {
@@ -433,6 +467,60 @@ return ftruncate(fileno(fptr), (off_t)size);
 
 #include <sys/stat.h>
 #include <fcntl.h>
+#if HAVE_UTIME
+#include <utime.h>
+#endif
+
+const char *
+sim_get_os_error_text (int Error)
+{
+return strerror (Error);
+}
+
+t_stat sim_copyfile (const char *source_file, const char *dest_file, t_bool overwrite_existing)
+{
+FILE *fIn = NULL, *fOut = NULL;
+t_stat st = SCPE_OK;
+char *buf = NULL;
+size_t bytes;
+
+fIn = sim_fopen (source_file, "rb");
+if (!fIn) {
+    st = sim_messagef (SCPE_ARG, "Can't open '%s' for input: %s\n", source_file, strerror (errno));
+    goto Cleanup_Return;
+    }
+fOut = sim_fopen (dest_file, "wb");
+if (!fOut) {
+    st = sim_messagef (SCPE_ARG, "Can't open '%s' for output: %s\n", dest_file, strerror (errno));
+    goto Cleanup_Return;
+    }
+buf = (char *)malloc (BUFSIZ);
+while ((bytes = fread (buf, 1, BUFSIZ, fIn)))
+    fwrite (buf, 1, bytes, fOut);
+Cleanup_Return:
+free (buf);
+if (fIn)
+    fclose (fIn);
+if (fOut)
+    fclose (fOut);
+#if defined(HAVE_UTIME)
+if (st == SCPE_OK) {
+    struct stat statb;
+
+    if (!stat (source_file, &statb)) {
+        struct utimbuf utim;
+
+        utim.actime = statb.st_atime;
+        utim.modtime = statb.st_mtime;
+        if (utime (dest_file, &utim))
+            st = SCPE_IOERR;
+        }
+    else
+        st = SCPE_IOERR;
+    }
+#endif
+return st;
+}
 
 int sim_set_fifo_nonblock (FILE *fptr)
 {
@@ -516,4 +604,21 @@ if (shmem->shm_fd != -1)
 free (shmem);
 }
 
+#endif
+
+#if defined(__VAX)
+/* 
+ * We privide a 'basic' snprintf, which 'might' overrun a buffer, but
+ * the actual use cases don't on other platforms and none of the callers
+ * care about the function return value.
+ */
+int sim_vax_snprintf(char *buf, size_t buf_size, const char *fmt, ...)
+{
+va_list arglist;
+
+va_start (arglist, fmt);
+vsprintf (buf, fmt, arglist);
+va_end (arglist);
+return 0;
+}
 #endif

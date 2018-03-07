@@ -28,17 +28,23 @@
 */
 
 #include "sim_video.h"
+#include "scp.h"
 
 t_bool vid_active = FALSE;
-int32 vid_mouse_xrel;
-int32 vid_mouse_yrel;
 int32 vid_cursor_x;
 int32 vid_cursor_y;
 t_bool vid_mouse_b1 = FALSE;
 t_bool vid_mouse_b2 = FALSE;
 t_bool vid_mouse_b3 = FALSE;
+static VID_QUIT_CALLBACK vid_quit_callback = NULL;
 
-t_stat vid_show (FILE* st, DEVICE *dptr,  UNIT* uptr, int32 val, char* desc)
+t_stat vid_register_quit_callback (VID_QUIT_CALLBACK callback)
+{
+vid_quit_callback = callback;
+return SCPE_OK;
+}
+
+t_stat vid_show (FILE* st, DEVICE *dptr,  UNIT* uptr, int32 val, CONST char* desc)
 {
 return vid_show_video (st, uptr, val, desc);
 }
@@ -49,6 +55,202 @@ char vid_release_key[64] = "Ctrl-Right-Shift";
 
 #include <SDL.h>
 #include <SDL_thread.h>
+
+static const char *key_names[] = 
+    {"F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", 
+     "0",   "1",  "2",  "3",  "4",  "5",  "6",  "7",  "8",  "9",    
+     "A",   "B",  "C",  "D",  "E",  "F",  "G",  "H",  "I",  "J", 
+     "K",   "L",  "M",  "N",  "O",  "P",  "Q",  "R",  "S",  "T", 
+     "U",   "V",  "W",  "X",  "Y",  "Z", 
+     "BACKQUOTE",   "MINUS",   "EQUALS", "LEFT_BRACKET", "RIGHT_BRACKET", 
+     "SEMICOLON", "SINGLE_QUOTE", "BACKSLASH", "LEFT_BACKSLASH", "COMMA", 
+     "PERIOD", "SLASH", "PRINT", "SCRL_LOCK", "PAUSE", "ESC", "BACKSPACE", 
+     "TAB", "ENTER", "SPACE", "INSERT", "DELETE", "HOME", "END", "PAGE_UP", 
+     "PAGE_DOWN", "UP", "DOWN", "LEFT", "RIGHT", "CAPS_LOCK", "NUM_LOCK", 
+     "ALT_L", "ALT_R", "CTRL_L", "CTRL_R", "SHIFT_L", "SHIFT_R", 
+     "WIN_L", "WIN_R", "MENU", "KP_ADD", "KP_SUBTRACT", "KP_END", "KP_DOWN", 
+     "KP_PAGE_DOWN", "KP_LEFT", "KP_RIGHT", "KP_HOME", "KP_UP", "KP_PAGE_UP", 
+     "KP_INSERT", "KP_DELETE", "KP_5", "KP_ENTER", "KP_MULTIPLY", "KP_DIVIDE"
+     };
+
+const char *vid_key_name (int32 key)
+{
+static char tmp_key_name[40];
+
+    if (key < sizeof(key_names)/sizeof(key_names[0]))
+        sprintf (tmp_key_name, "SIM_KEY_%s", key_names[key]);
+    else
+        sprintf (tmp_key_name, "UNKNOWN KEY: %d", key);
+    return tmp_key_name;
+}
+
+#if defined(HAVE_LIBPNG)
+/* From: https://github.com/driedfruit/SDL_SavePNG */
+
+/*
+ * Save an SDL_Surface as a PNG file.
+ *
+ * Returns 0 success or -1 on failure, the error message is then retrievable
+ * via SDL_GetError().
+ */
+#define SDL_SavePNG(surface, file) \
+        SDL_SavePNG_RW(surface, SDL_RWFromFile(file, "wb"), 1)
+
+/*
+ * SDL_SavePNG -- libpng-based SDL_Surface writer.
+ *
+ * This code is free software, available under zlib/libpng license.
+ * http://www.libpng.org/pub/png/src/libpng-LICENSE.txt
+ */
+#include <SDL.h>
+#include <png.h>
+
+#define SUCCESS 0
+#define ERROR -1
+
+#define USE_ROW_POINTERS
+
+#if SDL_BYTEORDER == SDL_BIG_ENDIAN
+#define rmask 0xFF000000
+#define gmask 0x00FF0000
+#define bmask 0x0000FF00
+#define amask 0x000000FF
+#else
+#define rmask 0x000000FF
+#define gmask 0x0000FF00
+#define bmask 0x00FF0000
+#define amask 0xFF000000
+#endif
+
+/* libpng callbacks */ 
+static void png_error_SDL(png_structp ctx, png_const_charp str)
+{
+    SDL_SetError("libpng: %s\n", str);
+}
+static void png_write_SDL(png_structp png_ptr, png_bytep data, png_size_t length)
+{
+    SDL_RWops *rw = (SDL_RWops*)png_get_io_ptr(png_ptr);
+    SDL_RWwrite(rw, data, sizeof(png_byte), length);
+}
+
+static SDL_Surface *SDL_PNGFormatAlpha(SDL_Surface *src) 
+{
+    SDL_Surface *surf;
+    SDL_Rect rect = { 0 };
+
+    /* NO-OP for images < 32bpp and 32bpp images that already have Alpha channel */ 
+    if (src->format->BitsPerPixel <= 24 || src->format->Amask) {
+        src->refcount++;
+        return src;
+    }
+
+    /* Convert 32bpp alpha-less image to 24bpp alpha-less image */
+    rect.w = src->w;
+    rect.h = src->h;
+    surf = SDL_CreateRGBSurface(src->flags, src->w, src->h, 24,
+        src->format->Rmask, src->format->Gmask, src->format->Bmask, 0);
+    SDL_LowerBlit(src, &rect, surf, &rect);
+
+    return surf;
+}
+
+static int SDL_SavePNG_RW(SDL_Surface *surface, SDL_RWops *dst, int freedst) 
+{
+    png_structp png_ptr;
+    png_infop info_ptr;
+    png_colorp pal_ptr;
+    SDL_Palette *pal;
+    int i, colortype;
+#ifdef USE_ROW_POINTERS
+    png_bytep *row_pointers;
+#endif
+    /* Initialize and do basic error checking */
+    if (!dst)
+    {
+        SDL_SetError("Argument 2 to SDL_SavePNG_RW can't be NULL, expecting SDL_RWops*\n");
+        return (ERROR);
+    }
+    if (!surface)
+    {
+        SDL_SetError("Argument 1 to SDL_SavePNG_RW can't be NULL, expecting SDL_Surface*\n");
+        if (freedst) SDL_RWclose(dst);
+        return (ERROR);
+    }
+    png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, png_error_SDL, NULL); /* err_ptr, err_fn, warn_fn */
+    if (!png_ptr) 
+    {
+        SDL_SetError("Unable to png_create_write_struct on %s\n", PNG_LIBPNG_VER_STRING);
+        if (freedst) SDL_RWclose(dst);
+        return (ERROR);
+    }
+    info_ptr = png_create_info_struct(png_ptr);
+    if (!info_ptr)
+    {
+        SDL_SetError("Unable to png_create_info_struct\n");
+        png_destroy_write_struct(&png_ptr, NULL);
+        if (freedst) SDL_RWclose(dst);
+        return (ERROR);
+    }
+    if (setjmp(png_jmpbuf(png_ptr)))    /* All other errors, see also "png_error_SDL" */
+    {
+        png_destroy_write_struct(&png_ptr, &info_ptr);
+        if (freedst) SDL_RWclose(dst);
+        return (ERROR);
+    }
+
+    /* Setup our RWops writer */
+    png_set_write_fn(png_ptr, dst, png_write_SDL, NULL); /* w_ptr, write_fn, flush_fn */
+
+    /* Prepare chunks */
+    colortype = PNG_COLOR_MASK_COLOR;
+    if (surface->format->BytesPerPixel > 0
+    &&  surface->format->BytesPerPixel <= 8
+    && (pal = surface->format->palette))
+    {
+        colortype |= PNG_COLOR_MASK_PALETTE;
+        pal_ptr = (png_colorp)malloc(pal->ncolors * sizeof(png_color));
+        for (i = 0; i < pal->ncolors; i++) {
+            pal_ptr[i].red   = pal->colors[i].r;
+            pal_ptr[i].green = pal->colors[i].g;
+            pal_ptr[i].blue  = pal->colors[i].b;
+        }
+        png_set_PLTE(png_ptr, info_ptr, pal_ptr, pal->ncolors);
+        free(pal_ptr);
+    }
+    else if (surface->format->BytesPerPixel > 3 || surface->format->Amask)
+        colortype |= PNG_COLOR_MASK_ALPHA;
+
+    png_set_IHDR(png_ptr, info_ptr, surface->w, surface->h, 8, colortype,
+        PNG_INTERLACE_NONE, PNG_COMPRESSION_TYPE_DEFAULT, PNG_FILTER_TYPE_DEFAULT);
+
+//    png_set_packing(png_ptr);
+
+    /* Allow BGR surfaces */
+    if (surface->format->Rmask == bmask
+    && surface->format->Gmask == gmask
+    && surface->format->Bmask == rmask)
+        png_set_bgr(png_ptr);
+
+    /* Write everything */
+    png_write_info(png_ptr, info_ptr);
+#ifdef USE_ROW_POINTERS
+    row_pointers = (png_bytep*) malloc(sizeof(png_bytep)*surface->h);
+    for (i = 0; i < surface->h; i++)
+        row_pointers[i] = (png_bytep)(Uint8*)surface->pixels + i * surface->pitch;
+    png_write_image(png_ptr, row_pointers);
+    free(row_pointers);
+#else
+    for (i = 0; i < surface->h; i++)
+        png_write_row(png_ptr, (png_bytep)(Uint8*)surface->pixels + i * surface->pitch);
+#endif
+    png_write_end(png_ptr, info_ptr);
+
+    /* Done */
+    png_destroy_write_struct(&png_ptr, &info_ptr);
+    if (freedst) SDL_RWclose(dst);
+    return (SUCCESS);
+}
+#endif /* defined(HAVE_LIBPNG) */
 
 /* 
     Some platforms (OS X), require that ALL input event processing be 
@@ -65,14 +267,16 @@ char vid_release_key[64] = "Ctrl-Right-Shift";
      
  */
 
-#define EVENT_REDRAW    1                               /* redraw event for SDL */
-#define EVENT_CLOSE     2                               /* close event for SDL */
-#define EVENT_CURSOR    3                               /* new cursor for SDL */
-#define EVENT_WARP      4                               /* warp mouse position for SDL */
-#define EVENT_DRAW      5                               /* draw/blit region for SDL */
-#define EVENT_SHOW      6                               /* show SDL capabilities */
-#define EVENT_OPEN      7                               /* vid_open request */
-#define EVENT_EXIT      8                               /* program exit */
+#define EVENT_REDRAW     1                              /* redraw event for SDL */
+#define EVENT_CLOSE      2                              /* close event for SDL */
+#define EVENT_CURSOR     3                              /* new cursor for SDL */
+#define EVENT_WARP       4                              /* warp mouse position for SDL */
+#define EVENT_DRAW       5                              /* draw/blit region for SDL */
+#define EVENT_SHOW       6                              /* show SDL capabilities */
+#define EVENT_OPEN       7                              /* vid_open request */
+#define EVENT_EXIT       8                              /* program exit */
+#define EVENT_SCREENSHOT 9                              /* produce screenshot of video window */
+#define EVENT_BEEP      10                              /* audio beep */
 #define MAX_EVENTS      20                              /* max events in queue */
 
 typedef struct {
@@ -94,6 +298,8 @@ typedef struct {
 int vid_thread (void* arg);
 int vid_video_events (void);
 void vid_show_video_event (void);
+void vid_screenshot_event (void);
+void vid_beep_event (void);
 
 /* 
    libSDL and libSDL2 have significantly different APIs.  
@@ -112,7 +318,41 @@ int32 vid_flags;                                        /* Open Flags */
 int32 vid_width;
 int32 vid_height;
 t_bool vid_ready;
+char vid_title[128];
+static void vid_beep_setup (int duration_ms, int tone_frequency);
+static void vid_beep_cleanup (void);
 #if SDL_MAJOR_VERSION == 1
+
+/*
+   Some platforms that use X11 display technology have libSDL 
+   environments which need to call XInitThreads when libSDL is used
+   in multi-threaded programs.  This routine attempts to locate
+   the X11 shareable library and if it is found loads it and calls
+   the XInitThreads routine to meet this requirement.
+ */
+#ifdef HAVE_DLOPEN
+#include <dlfcn.h>
+#endif
+
+static void _XInitThreads (void)
+{
+#ifdef HAVE_DLOPEN
+static void *hLib = NULL;                   /* handle to Library */
+#define __STR_QUOTE(tok) #tok
+#define __STR(tok) __STR_QUOTE(tok)
+static const char* lib_name = "libX11." __STR(HAVE_DLOPEN);
+typedef int (*_func)();
+_func _func_ptr = NULL;
+
+if (!hLib)
+    hLib = dlopen(lib_name, RTLD_NOW);
+if (hLib)
+    _func_ptr = (_func)((size_t)dlsym(hLib, "XInitThreads"));
+if (_func_ptr)
+    _func_ptr();
+#endif
+}
+
 t_bool vid_key_state[SDLK_LAST];
 SDL_Surface *vid_image;                                 /* video buffer */
 SDL_Surface *vid_window;                                /* window handle */
@@ -151,7 +391,8 @@ user_event.type = SDL_USEREVENT;
 user_event.user.code = EVENT_EXIT;
 user_event.user.data1 = NULL;
 user_event.user.data2 = NULL;
-SDL_PushEvent (&user_event);
+while (SDL_PushEvent (&user_event) < 0)
+    sim_os_ms_sleep (10);
 return stat;
 }
 
@@ -164,6 +405,7 @@ main_argc = argc;
 main_argv = argv;
 
 #if SDL_MAJOR_VERSION == 1
+_XInitThreads();
 SDL_Init (SDL_INIT_VIDEO|SDL_INIT_NOPARACHUTE);
 
 vid_main_thread_handle = SDL_CreateThread (main_thread , NULL);
@@ -174,6 +416,10 @@ SDL_Init (SDL_INIT_VIDEO);
 
 vid_main_thread_handle = SDL_CreateThread (main_thread , "simh-main", NULL);
 #endif
+
+sim_os_set_thread_priority (PRIORITY_ABOVE_NORMAL);
+
+vid_beep_setup (400, 660);
 
 while (1) {
     int status = SDL_WaitEvent (&event);
@@ -187,8 +433,16 @@ while (1) {
                 if (event.user.code == EVENT_SHOW)
                     vid_show_video_event ();
                 else {
-                    sim_printf ("main(): Unexpected User event: %d\n", event.user.code);
-                    break;
+                    if (event.user.code == EVENT_SCREENSHOT)
+                        vid_screenshot_event ();
+                    else {
+                        if (event.user.code == EVENT_BEEP)
+                            vid_beep_event ();
+                        else {
+                            sim_printf ("main(): Unexpected User event: %d\n", event.user.code);
+                            break;
+                            }
+                        }
                     }
                 }
             }
@@ -198,10 +452,11 @@ while (1) {
         }
     else {
         if (status < 0)
-            sim_printf ("main() - SDL_WaitEvent error: %s\n", SDL_GetError());
+            sim_printf ("main() - ` error: %s\n", SDL_GetError());
         }
     }
 SDL_WaitThread (vid_main_thread_handle, &status);
+vid_beep_cleanup ();
 SDL_Quit ();
 return status;
 }
@@ -250,20 +505,22 @@ return SCPE_OK;
 }
 #endif
 
-t_stat vid_open (DEVICE *dptr, uint32 width, uint32 height, int flags)
+t_stat vid_open (DEVICE *dptr, const char *title, uint32 width, uint32 height, int flags)
 {
 if (!vid_active) {
     int wait_count = 0;
     t_stat stat;
 
+    if ((strlen(sim_name) + 7 + (dptr ? strlen (dptr->name) : 0) + (title ? strlen (title) : 0)) < sizeof (vid_title))
+        sprintf (vid_title, "%s%s%s%s%s", sim_name, dptr ? " - " : "", dptr ? dptr->name : "", title ? " - " : "", title ? title : "");
+    else
+        sprintf (vid_title, "%s", sim_name);
     vid_flags = flags;
     vid_active = TRUE;
     vid_width = width;
     vid_height = height;
     vid_mouse_captured = FALSE;
     vid_cursor_visible = (vid_flags & SIM_VID_INPUTCAPTURED);
-    vid_mouse_xrel = 0;
-    vid_mouse_yrel = 0;
 
     vid_key_events.head = 0;
     vid_key_events.tail = 0;
@@ -299,7 +556,8 @@ if (vid_active) {
         user_event.user.data1 = NULL;
         user_event.user.data2 = NULL;
 
-        SDL_PushEvent (&user_event);
+        while (SDL_PushEvent (&user_event) < 0)
+            sim_os_ms_sleep (10);
         if (vid_thread_handle) {
             SDL_WaitThread (vid_thread_handle, &status);
             vid_thread_handle = NULL;
@@ -383,25 +641,41 @@ for (i = 0; i < h; i++)
 #else
 SDL_Event user_event;
 SDL_Rect *vid_dst;
+uint32 *vid_data;
 
 sim_debug (SIM_VID_DBG_VIDEO, vid_dev, "vid_draw(%d, %d, %d, %d)\n", x, y, w, h);
 
 vid_dst = (SDL_Rect *)malloc (sizeof(*vid_dst));
+if (!vid_dst) {
+    sim_printf ("%s: vid_draw() memory allocation error\n", vid_dev ? sim_dname(vid_dev) : "Video Device");
+    return;
+    }
 vid_dst->x = x;
 vid_dst->y = y;
 vid_dst->w = w;
 vid_dst->h = h;
+vid_data = (uint32 *)malloc (w*h*sizeof(*buf));
+if (!vid_data) {
+    sim_printf ("%s: vid_draw() memory allocation error\n", vid_dev ? sim_dname(vid_dev) : "Video Device");
+    free (vid_dst);
+    return;
+    }
+memcpy (vid_data, buf, w*h*sizeof(*buf));
 user_event.type = SDL_USEREVENT;
 user_event.user.code = EVENT_DRAW;
 user_event.user.data1 = (void *)vid_dst;
-user_event.user.data2 = (void *)buf;
-SDL_PushEvent (&user_event);
+user_event.user.data2 = (void *)vid_data;
+if (SDL_PushEvent (&user_event) < 0) {
+    sim_printf ("%s: vid_draw() SDL_PushEvent error: %s\n", vid_dev ? sim_dname(vid_dev) : "Video Device", SDL_GetError());
+    free (vid_dst);
+    free (vid_data);
+    }
 #endif
 }
 
-t_stat vid_set_cursor (t_bool visible, uint32 width, uint32 height, uint8 *data, uint8 *mask)
+t_stat vid_set_cursor (t_bool visible, uint32 width, uint32 height, uint8 *data, uint8 *mask, uint32 hot_x, uint32 hot_y)
 {
-SDL_Cursor *cursor = SDL_CreateCursor (data, mask, width, height, 0, 0);
+SDL_Cursor *cursor = SDL_CreateCursor (data, mask, width, height, hot_x, hot_y);
 SDL_Event user_event;
 
 sim_debug (SIM_VID_DBG_CURSOR, vid_dev, "vid_set_cursor(%s, %d, %d) Setting New Cursor\n", visible ? "visible" : "invisible", width, height);
@@ -426,8 +700,10 @@ user_event.user.code = EVENT_CURSOR;
 user_event.user.data1 = cursor;
 user_event.user.data2 = (void *)((size_t)visible);
 
-if (SDL_PushEvent (&user_event) < 0)
-    sim_printf ("%s: vid_set_cursor() SDL_PushEvent error: %s\n", sim_dname(vid_dev), SDL_GetError());
+if (SDL_PushEvent (&user_event) < 0) {
+    sim_printf ("%s: vid_set_cursor() SDL_PushEvent error: %s\n", vid_dev ? sim_dname(vid_dev) : "Video Device", SDL_GetError());
+    SDL_FreeCursor (cursor);
+    }
 
 return SCPE_OK;
 }
@@ -436,6 +712,9 @@ void vid_set_cursor_position (int32 x, int32 y)
 {
 int32 x_delta = vid_cursor_x - x;
 int32 y_delta = vid_cursor_y - y;
+
+if (vid_flags & SIM_VID_INPUTCAPTURED)
+    return;
 
 if ((x_delta) || (y_delta)) {
     sim_debug (SIM_VID_DBG_CURSOR, vid_dev, "vid_set_cursor_position(%d, %d) - Cursor position changed\n", x, y);
@@ -448,18 +727,14 @@ if ((x_delta) || (y_delta)) {
         for (i=0; i<vid_mouse_events.count; i++) {
             ev = &vid_mouse_events.events[(vid_mouse_events.head + i)%MAX_EVENTS];
             sim_debug (SIM_VID_DBG_CURSOR, vid_dev, "Pending Mouse Motion Event Adjusted from: (%d, %d) to (%d, %d)\n", ev->x_rel, ev->y_rel, ev->x_rel + x_delta, ev->y_rel + y_delta);
-            vid_mouse_xrel -= ev->x_rel;                            /* remove previously accumulated relative position */
-            vid_mouse_yrel -= ev->y_rel;
             ev->x_rel += x_delta;
             ev->y_rel += y_delta;
-            vid_mouse_xrel += ev->x_rel;                            /* update cumulative x & y rel */
-            vid_mouse_yrel += ev->y_rel;
             }
         if (SDL_SemPost (vid_mouse_events.sem))
-            sim_printf ("%s: vid_set_cursor_position(): SDL_SemPost error: %s\n", sim_dname(vid_dev), SDL_GetError());
+            sim_printf ("%s: vid_set_cursor_position(): SDL_SemPost error: %s\n", vid_dev ? sim_dname(vid_dev) : "Video Device", SDL_GetError());
         }
     else {
-        sim_printf ("%s: vid_set_cursor_position(): SDL_SemWait error: %s\n", sim_dname(vid_dev), SDL_GetError());
+        sim_printf ("%s: vid_set_cursor_position(): SDL_SemWait error: %s\n", vid_dev ? sim_dname(vid_dev) : "Video Device", SDL_GetError());
         }
     vid_cursor_x = x;
     vid_cursor_y = y;
@@ -884,10 +1159,13 @@ if (vid_mouse_captured) {
 #endif
         sim_debug (SIM_VID_DBG_KEY, vid_dev, "vid_key() - Cursor Release\n");
 #if SDL_MAJOR_VERSION == 1
-        SDL_WM_GrabInput (SDL_GRAB_OFF);                /* relese cursor */
-        SDL_ShowCursor (SDL_ENABLE);                    /* show cursor */
+        if (SDL_WM_GrabInput (SDL_GRAB_OFF) < 0)        /* relese cursor */
+            sim_printf ("%s: vid_key(): SDL_WM_GrabInput error: %s\n", sim_dname(vid_dev), SDL_GetError());
+        if (SDL_ShowCursor (SDL_ENABLE) < 0)            /* show cursor */
+            sim_printf ("%s: vid_key(): SDL_ShowCursor error: %s\n", sim_dname(vid_dev), SDL_GetError());
 #else
-        SDL_SetRelativeMouseMode(SDL_FALSE);            /* release cursor, show cursor */
+        if (SDL_SetRelativeMouseMode(SDL_FALSE) < 0)    /* release cursor, show cursor */
+            sim_printf ("%s: vid_key(): SDL_SetRelativeMouseMode error: %s\n", sim_dname(vid_dev), SDL_GetError());
 #endif
         vid_mouse_captured = FALSE;
         return;
@@ -896,23 +1174,21 @@ if (vid_mouse_captured) {
 if (!sim_is_running)
     return;
 if (SDL_SemWait (vid_key_events.sem) == 0) {
-    sim_debug (SIM_VID_DBG_KEY, vid_dev, "Keyboard Event: State: %d, Keysym(scancode,sym): (%d,%d)\n", event->state, event->keysym.scancode, event->keysym.sym);
     if (vid_key_events.count < MAX_EVENTS) {
+        ev.key = vid_map_key (event->keysym.sym);
+        sim_debug (SIM_VID_DBG_KEY, vid_dev, "Keyboard Event: State: %s, Keysym(scancode,sym): (%d,%d) - %s\n", (event->state == SDL_PRESSED) ? "PRESSED" : "RELEASED", event->keysym.scancode, event->keysym.sym, vid_key_name(ev.key));
         if (event->state == SDL_PRESSED) {
 #if SDL_MAJOR_VERSION == 1
             if (!vid_key_state[event->keysym.sym]) {    /* Key was not down before */
                 vid_key_state[event->keysym.sym] = TRUE;
 #else
-            if (!vid_key_state[event->keysym.scancode]) {    /* Key was not down before */
+            if (!vid_key_state[event->keysym.scancode]) {/* Key was not down before */
                 vid_key_state[event->keysym.scancode] = TRUE;
 #endif
-                ev.key = vid_map_key (event->keysym.sym);
                 ev.state = SIM_KEYPRESS_DOWN;
                 }
-            else {
-                ev.key = vid_map_key (event->keysym.sym);
+            else
                 ev.state = SIM_KEYPRESS_REPEAT;
-                }
             }
         else {
 #if SDL_MAJOR_VERSION == 1
@@ -920,7 +1196,6 @@ if (SDL_SemWait (vid_key_events.sem) == 0) {
 #else
             vid_key_state[event->keysym.scancode] = FALSE;
 #endif
-            ev.key = vid_map_key (event->keysym.sym);
             ev.state = SIM_KEYPRESS_UP;
             }
         vid_key_events.events[vid_key_events.tail++] = ev;
@@ -929,7 +1204,7 @@ if (SDL_SemWait (vid_key_events.sem) == 0) {
             vid_key_events.tail = 0;
         }
     else {
-        sim_debug (SIM_VID_DBG_KEY, vid_dev, "Keyboard Event DISCARDED: State: %d, Keysym: Scancode: %d, Keysym: %d\n", event->state, event->keysym.scancode, event->keysym.sym);
+        sim_debug (SIM_VID_DBG_KEY, vid_dev, "Keyboard Event DISCARDED: State: %s, Keysym: Scancode: %d, Keysym: %d\n", (event->state == SDL_PRESSED) ? "PRESSED" : "RELEASED", event->keysym.scancode, event->keysym.sym);
         }
     if (SDL_SemPost (vid_key_events.sem))
         sim_printf ("%s: vid_key(): SDL_SemPost error: %s\n", sim_dname(vid_dev), SDL_GetError());
@@ -961,7 +1236,7 @@ while (SDL_PeepEvents (&dummy_event, 1, SDL_GETEVENT, SDL_MOUSEMOTION, SDL_MOUSE
     event->yrel += dev->yrel;
     event->x = dev->x;
     event->y = dev->y;
-    event->state ^= dev->state;
+    event->state = dev->state;
     sim_debug (SIM_VID_DBG_MOUSE, vid_dev, "Mouse Move Event: Additional Event Coalesced:pos:(%d,%d) rel:(%d,%d) buttons:(%d,%d,%d)\n", 
         dev->x, dev->y, dev->xrel, dev->yrel, (dev->state & SDL_BUTTON(SDL_BUTTON_LEFT)) ? 1 : 0, (dev->state & SDL_BUTTON(SDL_BUTTON_MIDDLE)) ? 1 : 0, (dev->state & SDL_BUTTON(SDL_BUTTON_RIGHT)) ? 1 : 0);
     };
@@ -970,13 +1245,11 @@ if (SDL_SemWait (vid_mouse_events.sem) == 0) {
         event->xrel = (event->x - vid_cursor_x);
         event->yrel = (event->y - vid_cursor_y);
         }
-    vid_mouse_xrel += event->xrel;                          /* update cumulative x rel */
-    vid_mouse_yrel += event->yrel;                          /* update cumulative y rel */
     vid_mouse_b1 = (event->state & SDL_BUTTON(SDL_BUTTON_LEFT)) ? TRUE : FALSE;
     vid_mouse_b2 = (event->state & SDL_BUTTON(SDL_BUTTON_MIDDLE)) ? TRUE : FALSE;
     vid_mouse_b3 = (event->state & SDL_BUTTON(SDL_BUTTON_RIGHT)) ? TRUE : FALSE;
-    sim_debug (SIM_VID_DBG_MOUSE, vid_dev, "Mouse Move Event: pos:(%d,%d) rel:(%d,%d) buttons:(%d,%d,%d) - Count: %d vid_mouse_rel:(%d,%d), vid_cursor:(%d,%d)\n", 
-                                            event->x, event->y, event->xrel, event->yrel, (event->state & SDL_BUTTON(SDL_BUTTON_LEFT)) ? 1 : 0, (event->state & SDL_BUTTON(SDL_BUTTON_MIDDLE)) ? 1 : 0, (event->state & SDL_BUTTON(SDL_BUTTON_RIGHT)) ? 1 : 0, vid_mouse_events.count, vid_mouse_xrel, vid_mouse_yrel, vid_cursor_x, vid_cursor_y);
+    sim_debug (SIM_VID_DBG_MOUSE, vid_dev, "Mouse Move Event: pos:(%d,%d) rel:(%d,%d) buttons:(%d,%d,%d) - Count: %d vid_cursor:(%d,%d)\n", 
+                                            event->x, event->y, event->xrel, event->yrel, (event->state & SDL_BUTTON(SDL_BUTTON_LEFT)) ? 1 : 0, (event->state & SDL_BUTTON(SDL_BUTTON_MIDDLE)) ? 1 : 0, (event->state & SDL_BUTTON(SDL_BUTTON_RIGHT)) ? 1 : 0, vid_mouse_events.count, vid_cursor_x, vid_cursor_y);
     if (vid_mouse_events.count < MAX_EVENTS) {
         SIM_MOUSE_EVENT *tail = &vid_mouse_events.events[(vid_mouse_events.tail+MAX_EVENTS-1)%MAX_EVENTS];
 
@@ -985,14 +1258,18 @@ if (SDL_SemWait (vid_mouse_events.sem) == 0) {
         ev.b1_state = vid_mouse_b1;
         ev.b2_state = vid_mouse_b2;
         ev.b3_state = vid_mouse_b3;
+        ev.x_pos = event->x;
+        ev.y_pos = event->y;
         if ((vid_mouse_events.count > 0) &&             /* Is there a tail event? */
             (ev.b1_state == tail->b1_state) &&          /* With the same button state? */
             (ev.b2_state == tail->b2_state) && 
             (ev.b3_state == tail->b3_state)) {          /* Merge the motion */
             tail->x_rel += ev.x_rel;
             tail->y_rel += ev.y_rel;
-            sim_debug (SIM_VID_DBG_MOUSE, vid_dev, "Mouse Move Event: Coalesced into pending event: (%d,%d) vid_mouse_rel:(%d,%d)\n", 
-                tail->x_rel, tail->y_rel, vid_mouse_xrel, vid_mouse_yrel);
+            tail->x_pos = ev.x_pos;
+            tail->y_pos = ev.y_pos;
+            sim_debug (SIM_VID_DBG_MOUSE, vid_dev, "Mouse Move Event: Coalesced into pending event: (%d,%d)\n", 
+                tail->x_rel, tail->y_rel);
             }
         else {                                          /* Add a new event */
             vid_mouse_events.events[vid_mouse_events.tail++] = ev;
@@ -1026,7 +1303,8 @@ if ((!vid_mouse_captured) && (vid_flags & SIM_VID_INPUTCAPTURED)) {
         SDL_PumpEvents ();
         while (SDL_PeepEvents (&dummy_event, 1, SDL_GETEVENT, SDL_MOUSEMOTIONMASK)) {};
 #else
-        SDL_SetRelativeMouseMode(SDL_TRUE);                 /* lock cursor to window, hide cursor */
+        if (SDL_SetRelativeMouseMode (SDL_TRUE) < 0)        /* lock cursor to window, hide cursor */
+            sim_printf ("%s: vid_mouse_button(): SDL_SetRelativeMouseMode error: %s\n", sim_dname(vid_dev), SDL_GetError());
         SDL_WarpMouseInWindow (NULL, vid_width/2, vid_height/2);/* back to center */
         SDL_PumpEvents ();
         while (SDL_PeepEvents (&dummy_event, 1, SDL_GETEVENT, SDL_MOUSEMOTION, SDL_MOUSEMOTION)) {};
@@ -1054,6 +1332,8 @@ if (SDL_SemWait (vid_mouse_events.sem) == 0) {
     if (vid_mouse_events.count < MAX_EVENTS) {
         ev.x_rel = 0;
         ev.y_rel = 0;
+        ev.x_pos = event->x;
+        ev.y_pos = event->y;
         ev.b1_state = vid_mouse_b1;
         ev.b2_state = vid_mouse_b2;
         ev.b3_state = vid_mouse_b3;
@@ -1083,7 +1363,8 @@ sim_debug (SIM_VID_DBG_VIDEO, vid_dev, "Video Update Event: \n");
 if (sim_deb)
     fflush (sim_deb);
 #if SDL_MAJOR_VERSION == 1
-SDL_BlitSurface (vid_image, NULL, vid_window, &vid_dst);
+if (SDL_BlitSurface (vid_image, NULL, vid_window, &vid_dst) < 0)
+    sim_printf ("%s: vid_update(): SDL_BlitSurface error: %s\n", sim_dname(vid_dev), SDL_GetError());
 SDL_UpdateRects (vid_window, 1, &vid_dst);
 #else
 if (SDL_RenderClear (vid_renderer))
@@ -1108,7 +1389,7 @@ if (visible)
 if ((vid_window == SDL_GetMouseFocus ()) && visible)
     SDL_WarpMouseInWindow (NULL, vid_cursor_x, vid_cursor_y);/* sync position */
 #endif
-if (vid_cursor)
+if ((vid_cursor != cursor) && (vid_cursor))
     SDL_FreeCursor (vid_cursor);
 vid_cursor = cursor;
 SDL_ShowCursor (visible);
@@ -1128,7 +1409,6 @@ SDL_WarpMouseInWindow (NULL, vid_cursor_x, vid_cursor_y);
 SDL_PumpEvents ();
 }
 
-#if SDL_MAJOR_VERSION != 1
 void vid_draw_region (SDL_UserEvent *event)
 {
 SDL_Rect *vid_dst = (SDL_Rect *)event->data1;
@@ -1136,19 +1416,31 @@ uint32 *buf = (uint32 *)event->data2;
 
 sim_debug (SIM_VID_DBG_VIDEO, vid_dev, "Draw Region Event: (%d,%d,%d,%d)\n", vid_dst->x, vid_dst->x, vid_dst->w, vid_dst->h);
 
+#if SDL_MAJOR_VERSION == 1
+if (1) {
+    int32 i;
+    uint32* pixels;
+
+    pixels = (uint32 *)vid_image->pixels;
+
+    for (i = 0; i < vid_dst->h; i++)
+        memcpy (pixels + ((i + vid_dst->y) * vid_width) + vid_dst->x, buf + vid_dst->w*i, vid_dst->w*sizeof(*pixels));
+    }
+#else
 if (SDL_UpdateTexture(vid_texture, vid_dst, buf, vid_dst->w*sizeof(*buf)))
     sim_printf ("%s: vid_draw() - SDL_UpdateTexture error: %s\n", sim_dname(vid_dev), SDL_GetError());
+#endif
 
 free (vid_dst);
+free (buf);
 event->data1 = NULL;
 }
-#endif
 
 int vid_video_events (void)
 {
 SDL_Event event;
 #if SDL_MAJOR_VERSION == 1
-static char *eventtypes[] = {
+static const char *eventtypes[] = {
     "NOEVENT",              /**< Unused (do not remove) */
     "ACTIVEEVENT",          /**< Application loses/gains visibility */
     "KEYDOWN",              /**< Keys pressed */
@@ -1359,7 +1651,7 @@ if (vid_flags & SIM_VID_INPUTCAPTURED) {
     char title[150];
 
     memset (title, 0, sizeof(title));
-    strncpy (title, sim_name, sizeof(title)-1);
+    strncpy (title, vid_title, sizeof(title)-1);
     strncat (title, "                                             ReleaseKey=", sizeof(title)-(1+strlen(title)));
     strncat (title, vid_release_key, sizeof(title)-(1+strlen(title)));
 #if SDL_MAJOR_VERSION == 1
@@ -1370,9 +1662,9 @@ if (vid_flags & SIM_VID_INPUTCAPTURED) {
     }
 else
 #if SDL_MAJOR_VERSION == 1
-    SDL_WM_SetCaption (sim_name, sim_name);
+    SDL_WM_SetCaption (vid_title, sim_name);
 #else
-    SDL_SetWindowTitle (vid_window, sim_name);
+    SDL_SetWindowTitle (vid_window, vid_title);
 #endif
 
 vid_ready = TRUE;
@@ -1405,6 +1697,9 @@ while (vid_active) {
                         case SDL_WINDOWEVENT_ENTER:
                              if (vid_flags & SIM_VID_INPUTCAPTURED)
                                  SDL_WarpMouseInWindow (NULL, vid_width/2, vid_height/2);   /* center position */
+                            break;
+                        case SDL_WINDOWEVENT_EXPOSED:
+                            vid_update ();
                             break;
                         }
                     }
@@ -1449,20 +1744,31 @@ if (0)                        while (SDL_PeepEvents (&event, 1, SDL_GETEVENT, SD
                     if (event.user.code == EVENT_CLOSE) {
                         event.user.code = 0;    /* Mark as done */
                         }
-#if SDL_MAJOR_VERSION != 1
                     if (event.user.code == EVENT_DRAW) {
                         vid_draw_region ((SDL_UserEvent*)&event);
                         event.user.code = 0;    /* Mark as done */
                         }
-#endif
                     if (event.user.code == EVENT_SHOW) {
                         vid_show_video_event ();
+                        event.user.code = 0;    /* Mark as done */
+                        }
+                    if (event.user.code == EVENT_SCREENSHOT) {
+                        vid_screenshot_event ();
+                        event.user.code = 0;    /* Mark as done */
+                        }
+                    if (event.user.code == EVENT_BEEP) {
+                        vid_beep_event ();
                         event.user.code = 0;    /* Mark as done */
                         }
                     if (event.user.code != 0) {
                         sim_printf ("vid_thread(): Unexpected user event code: %d\n", event.user.code);
                         }
                     }
+                break;
+            case SDL_QUIT:
+                sim_debug (SIM_VID_DBG_VIDEO|SIM_VID_DBG_KEY|SIM_VID_DBG_MOUSE|SIM_VID_DBG_CURSOR, vid_dev, "vid_thread() - QUIT Event - %s\n", vid_quit_callback ? "Signaled" : "Ignored");
+                if (vid_quit_callback)
+                    vid_quit_callback ();
                 break;
 
             default:
@@ -1495,13 +1801,16 @@ return 0;
 int vid_thread (void *arg)
 {
 #if SDL_MAJOR_VERSION == 1
+_XInitThreads();
 SDL_Init (SDL_INIT_VIDEO|SDL_INIT_NOPARACHUTE);
 #else
 SDL_SetHint (SDL_HINT_RENDER_DRIVER, "software");
 
 SDL_Init (SDL_INIT_VIDEO);
 #endif
+vid_beep_setup (400, 660);
 vid_video_events ();
+vid_beep_cleanup ();
 SDL_Quit ();
 return 0;
 }
@@ -1533,19 +1842,19 @@ else
 return (const char *)SDLVersion;
 }
 
-t_stat vid_set_release_key (FILE* st, UNIT* uptr, int32 val, void* desc)
+t_stat vid_set_release_key (FILE* st, UNIT* uptr, int32 val, CONST void* desc)
 {
 return SCPE_NOFNC;
 }
 
-t_stat vid_show_release_key (FILE* st, UNIT* uptr, int32 val, void* desc)
+t_stat vid_show_release_key (FILE* st, UNIT* uptr, int32 val, CONST void* desc)
 {
 if (vid_flags & SIM_VID_INPUTCAPTURED)
     fprintf (st, "ReleaseKey=%s", vid_release_key);
 return SCPE_OK;
 }
 
-static t_stat _vid_show_video (FILE* st, UNIT* uptr, int32 val, void* desc)
+static t_stat _vid_show_video (FILE* st, UNIT* uptr, int32 val, CONST void* desc)
 {
 int i;
 
@@ -1787,14 +2096,14 @@ static t_stat _show_stat;
 static FILE *_show_st;
 static UNIT *_show_uptr;
 static int32 _show_val;
-static void *_show_desc;
+static CONST void *_show_desc;
 
 void vid_show_video_event (void)
 {
 _show_stat = _vid_show_video (_show_st, _show_uptr, _show_val, _show_desc);
 }
 
-t_stat vid_show_video (FILE* st, UNIT* uptr, int32 val, void* desc)
+t_stat vid_show_video (FILE* st, UNIT* uptr, int32 val, CONST void* desc)
 {
 SDL_Event user_event;
 
@@ -1809,7 +2118,8 @@ user_event.user.code = EVENT_SHOW;
 user_event.user.data1 = NULL;
 user_event.user.data2 = NULL;
 #if defined (SDL_MAIN_AVAILABLE)
-SDL_PushEvent (&user_event);
+while (SDL_PushEvent (&user_event) < 0)
+    sim_os_ms_sleep (10);
 #else
 vid_show_video_event ();
 #endif
@@ -1818,12 +2128,184 @@ while (_show_stat == -1)
 return _show_stat;
 }
 
+static t_stat _vid_screenshot (const char *filename)
+{
+int stat;
+char *fullname = NULL;
+
+if (!vid_active) {
+    sim_printf ("No video display is active\n");
+    return SCPE_UDIS | SCPE_NOMESSAGE;
+    }
+fullname = (char *)malloc (strlen(filename) + 5);
+if (!filename)
+    return SCPE_MEM;
+#if SDL_MAJOR_VERSION == 1
+#if defined(HAVE_LIBPNG)
+if (!match_ext (filename, "bmp")) {
+    sprintf (fullname, "%s%s", filename, match_ext (filename, "png") ? "" : ".png");
+    stat = SDL_SavePNG(vid_image, fullname);
+    }
+else {
+    sprintf (fullname, "%s", filename);
+    stat = SDL_SaveBMP(vid_image, fullname);
+    }
+#else
+sprintf (fullname, "%s%s", filename, match_ext (filename, "bmp") ? "" : ".bmp");
+stat = SDL_SaveBMP(vid_image, fullname);
+#endif /* defined(HAVE_LIBPNG) */
+#else /* SDL_MAJOR_VERSION != 1 */
+if (1) {
+    SDL_Surface *sshot = sim_end ? SDL_CreateRGBSurface(0, vid_width, vid_height, 32, 0x00ff0000, 0x0000ff00, 0x000000ff, 0xff000000) :
+                                   SDL_CreateRGBSurface(0, vid_width, vid_height, 32, 0x0000ff00, 0x000ff000, 0xff000000, 0x000000ff) ;
+    SDL_RenderReadPixels(vid_renderer, NULL, SDL_PIXELFORMAT_ARGB8888, sshot->pixels, sshot->pitch);
+#if defined(HAVE_LIBPNG)
+    if (!match_ext (filename, "bmp")) {
+        sprintf (fullname, "%s%s", filename, match_ext (filename, "png") ? "" : ".png");
+        stat = SDL_SavePNG(sshot, fullname);
+        }
+    else {
+        sprintf (fullname, "%s", filename);
+        stat = SDL_SaveBMP(sshot, fullname);
+        }
+#else
+    sprintf (fullname, "%s%s", filename, match_ext (filename, "bmp") ? "" : ".bmp");
+    stat = SDL_SaveBMP(sshot, fullname);
+#endif /* defined(HAVE_LIBPNG) */
+    SDL_FreeSurface(sshot);
+    }
+#endif
+if (stat) {
+    sim_printf ("Error saving screenshot to %s: %s\n", fullname, SDL_GetError());
+    free (fullname);
+    return SCPE_IOERR | SCPE_NOMESSAGE;
+    }
+else {
+    if (!sim_quiet)
+        sim_printf ("Screenshot saved to %s\n", fullname);
+    free (fullname);
+    return SCPE_OK;
+    }
+}
+
+static t_stat _screenshot_stat;
+static const char *_screenshot_filename;
+
+void vid_screenshot_event (void)
+{
+_screenshot_stat = _vid_screenshot (_screenshot_filename);
+}
+
+t_stat vid_screenshot (const char *filename)
+{
+SDL_Event user_event;
+
+_screenshot_stat = -1;
+_screenshot_filename = filename;
+
+user_event.type = SDL_USEREVENT;
+user_event.user.code = EVENT_SCREENSHOT;
+user_event.user.data1 = NULL;
+user_event.user.data2 = NULL;
+#if defined (SDL_MAIN_AVAILABLE)
+while (SDL_PushEvent (&user_event) < 0)
+    sim_os_ms_sleep (10);
+#else
+vid_screenshot_event ();
+#endif
+while (_screenshot_stat == -1)
+    SDL_Delay (20);
+return _screenshot_stat;
+}
+
+#include <SDL_audio.h>
+#include <math.h>
+
+const int AMPLITUDE = 20000;
+const int SAMPLE_FREQUENCY = 11025;
+static int16 *vid_beep_data;
+static int vid_beep_offset;
+static int vid_beep_duration;
+static int vid_beep_samples;
+
+static void vid_audio_callback(void *ctx, Uint8 *stream, int length)
+{
+int16 *data = (int16 *)stream;
+int i, sum, remnant = ((vid_beep_samples - vid_beep_offset) * sizeof (*vid_beep_data));
+
+if (length > remnant) {
+    memset (stream + remnant, 0, length - remnant);
+    length = remnant;
+    if (remnant == 0) {
+        SDL_PauseAudio(1);
+        return;
+        }
+    }
+memcpy (stream, &vid_beep_data[vid_beep_offset], length);
+for (i=sum=0; i<length; i++)
+    sum += stream[i];
+vid_beep_offset += length / sizeof(*vid_beep_data);
+}
+
+static void vid_beep_setup (int duration_ms, int tone_frequency)
+{
+if (!vid_beep_data) {
+    int i;
+    SDL_AudioSpec desiredSpec;
+
+    memset (&desiredSpec, 0, sizeof(desiredSpec));
+    desiredSpec.freq = SAMPLE_FREQUENCY;
+    desiredSpec.format = AUDIO_S16SYS;
+    desiredSpec.channels = 1;
+    desiredSpec.samples = 2048;
+    desiredSpec.callback = vid_audio_callback;
+
+    SDL_OpenAudio(&desiredSpec, NULL);
+
+    vid_beep_samples = (int)((SAMPLE_FREQUENCY * duration_ms) / 1000.0);
+    vid_beep_duration = duration_ms;
+    vid_beep_data = (int16 *)malloc (sizeof(*vid_beep_data) * vid_beep_samples);
+    for (i=0; i<vid_beep_samples; i++)
+        vid_beep_data[i] = (int16)(AMPLITUDE * sin(((double)(i * M_PI * tone_frequency)) / SAMPLE_FREQUENCY));
+    }
+}
+
+static void vid_beep_cleanup (void)
+{
+SDL_CloseAudio();
+free (vid_beep_data);
+vid_beep_data = NULL;
+}
+
+void vid_beep_event (void)
+{
+vid_beep_offset = 0;                /* reset to beginning of sample set */
+SDL_PauseAudio (0);                 /* Play sound */
+}
+
+void vid_beep (void)
+{
+SDL_Event user_event;
+
+user_event.type = SDL_USEREVENT;
+user_event.user.code = EVENT_BEEP;
+user_event.user.data1 = NULL;
+user_event.user.data2 = NULL;
+#if defined (SDL_MAIN_AVAILABLE)
+while (SDL_PushEvent (&user_event) < 0)
+    sim_os_ms_sleep (10);
+#else
+vid_beep_event ();
+#endif
+SDL_Delay (vid_beep_duration + 100);/* Wait for sound to finnish */
+}
+
 #else /* !(defined(USE_SIM_VIDEO) && defined(HAVE_LIBSDL)) */
 /* Non-implemented versions */
 
 uint32 vid_mono_palette[2];                             /* Monochrome Color Map */
 
-t_stat vid_open (DEVICE *dptr, uint32 width, uint32 height, int flags)
+t_stat vid_open (DEVICE *dptr, const char *title, uint32 width, uint32 height, int flags)
 {
 return SCPE_NOFNC;
 }
@@ -1848,7 +2330,7 @@ void vid_draw (int32 x, int32 y, int32 w, int32 h, uint32 *buf)
 return;
 }
 
-t_stat vid_set_cursor (t_bool visible, uint32 width, uint32 height, uint8 *data, uint8 *mask)
+t_stat vid_set_cursor (t_bool visible, uint32 width, uint32 height, uint8 *data, uint8 *mask, uint32 hot_x, uint32 hot_y)
 {
 return SCPE_NOFNC;
 }
@@ -1863,25 +2345,36 @@ void vid_refresh (void)
 return;
 }
 
+void vid_beep (void)
+{
+return;
+}
+
 const char *vid_version (void)
 {
 return "No Video Support";
 }
 
-t_stat vid_set_release_key (FILE* st, UNIT* uptr, int32 val, void* desc)
+t_stat vid_set_release_key (FILE* st, UNIT* uptr, int32 val, CONST void* desc)
 {
 return SCPE_NOFNC;
 }
 
-t_stat vid_show_release_key (FILE* st, UNIT* uptr, int32 val, void* desc)
+t_stat vid_show_release_key (FILE* st, UNIT* uptr, int32 val, CONST void* desc)
 {
 fprintf (st, "no release key");
 return SCPE_OK;
 }
 
-t_stat vid_show_video (FILE* st, UNIT* uptr, int32 val, void* desc)
+t_stat vid_show_video (FILE* st, UNIT* uptr, int32 val, CONST void* desc)
 {
 fprintf (st, "video support unavailable");
 return SCPE_OK;
+}
+
+t_stat vid_screenshot (const char *filename)
+{
+sim_printf ("video support unavailable\n");
+return SCPE_NOFNC|SCPE_NOMESSAGE;
 }
 #endif /* defined(USE_SIM_VIDEO) */

@@ -29,6 +29,10 @@
    06-Nov-2013  MB      Increased the speed of v-sync interrupts, which
                         was too slow for some O/S drivers.
    11-Jun-2013  MB      First version
+
+   Related documents:
+
+        AZ-GLFAB-MN - VAXstation II Technical Manual, BA23 Enclosure (Appendix C)
 */
 
 #if !defined(VAX_620)
@@ -36,6 +40,8 @@
 #include "vax_defs.h"
 #include "sim_video.h"
 #include "vax_2681.h"
+#include "vax_lk.h"
+#include "vax_vs.h"
 
 /* CSR - control/status register */
 
@@ -193,13 +199,7 @@ BITFIELD vc_ic_mode_bits[] = {
 
 #define IOLN_QVSS       0100
 
-extern int32 int_req[IPL_HLVL];
 extern int32 tmxr_poll;                                 /* calibrated delay */
-
-extern t_stat lk_wr (uint8 c);
-extern t_stat lk_rd (uint8 *c);
-extern t_stat vs_wr (uint8 c);
-extern t_stat vs_rd (uint8 *c);
 
 struct vc_int_t {
     uint32 ptr;
@@ -236,9 +236,9 @@ t_stat vc_wr (int32 data, int32 PA, int32 access);
 t_stat vc_svc (UNIT *uptr);
 t_stat vc_reset (DEVICE *dptr);
 t_stat vc_detach (UNIT *dptr);
-t_stat vc_set_enable (UNIT *uptr, int32 val, char *cptr, void *desc);
-t_stat vc_set_capture (UNIT *uptr, int32 val, char *cptr, void *desc);
-t_stat vc_show_capture (FILE* st, UNIT* uptr, int32 val, void* desc);
+t_stat vc_set_enable (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+t_stat vc_set_capture (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+t_stat vc_show_capture (FILE* st, UNIT* uptr, int32 val, CONST void* desc);
 void vc_setint (int32 src);
 int32 vc_inta (void);
 void vc_clrint (int32 src);
@@ -278,24 +278,24 @@ DIB vc_dib = {
 #define DBG_INT         0x00FF                          /* interrupt 0-7 */
 
 DEBTAB vc_debug[] = {
-    {"REG",     DBG_REG},
-    {"CRTC",    DBG_CRTC},
-    {"CURSOR",  DBG_CURSOR},
-    {"TCURSOR", DBG_TCURSOR},
-    {"SCANL",   DBG_SCANL},
-    {"DUART",   DBG_INT0},
-    {"VSYNC",   DBG_INT1},
-    {"MOUSE",   DBG_INT2},
-    {"CSTRT",   DBG_INT3},
-    {"MBA",     DBG_INT4},
-    {"MBB",     DBG_INT5},
-    {"MBC",     DBG_INT6},
-    {"SPARE",   DBG_INT7},
-    {"INT",     DBG_INT0|DBG_INT1|DBG_INT2|DBG_INT3|DBG_INT4|DBG_INT5|DBG_INT6|DBG_INT7},
-    {"VMOUSE",  SIM_VID_DBG_MOUSE},
-    {"VCURSOR", SIM_VID_DBG_CURSOR},
-    {"VKEY",    SIM_VID_DBG_KEY},
-    {"VVIDEO",  SIM_VID_DBG_VIDEO},
+    {"REG",     DBG_REG,                "Register activity"},
+    {"CRTC",    DBG_CRTC,               "CRTC register activity"},
+    {"CURSOR",  DBG_CURSOR,             "Cursor content, function and visibility activity"},
+    {"TCURSOR", DBG_TCURSOR,            "Cursor content, function and visibility activity"},
+    {"SCANL",   DBG_SCANL,              "Scanline map activity"},
+    {"DUART",   DBG_INT0,               "interrupt 0"},
+    {"VSYNC",   DBG_INT1,               "interrupt 1"},
+    {"MOUSE",   DBG_INT2,               "interrupt 2"},
+    {"CSTRT",   DBG_INT3,               "interrupt 3"},
+    {"MBA",     DBG_INT4,               "interrupt 4"},
+    {"MBB",     DBG_INT5,               "interrupt 5"},
+    {"MBC",     DBG_INT6,               "interrupt 6"},
+    {"SPARE",   DBG_INT7,               "interrupt 7"},
+    {"INT",     DBG_INT0|DBG_INT1|DBG_INT2|DBG_INT3|DBG_INT4|DBG_INT5|DBG_INT6|DBG_INT7, "interrupt 0-7"},
+    {"VMOUSE",  SIM_VID_DBG_MOUSE,      "Video Mouse"},
+    {"VCURSOR", SIM_VID_DBG_CURSOR,     "Video Cursor"},
+    {"VKEY",    SIM_VID_DBG_KEY,        "Video Key"},
+    {"VVIDEO",  SIM_VID_DBG_VIDEO,      "Video Video"},
     {0}
     };
 
@@ -350,7 +350,7 @@ DEVICE vc_dev = {
     };
 
 UART2681 vc_uart = {
-    &vc_uart_int,
+    &vc_uart_int, NULL,
     { { &lk_wr, &lk_rd }, { &vs_wr, &vs_rd } }
     };
 
@@ -566,7 +566,15 @@ switch (rg) {
         else if (vc_intc.ptr == 9)                      /* ACR */
             vc_intc.acr = data & 0xFFFF;
         else  
-            vc_intc.vec[vc_intc.ptr] = data & 0xFFFF;   /* Vector */
+            /* 
+               Masking the vector with 0x1FC is probably storing 
+               one more bit than the original hardware did.  
+               Doing this allows a maximal simulated hardware 
+               configuration use a reasonable vector where real 
+               hardware could never be assembled with that many 
+               devices.
+             */
+            vc_intc.vec[vc_intc.ptr] = data & 0x1FC;    /* Vector */ 
         break;
 
     case 7:                                             /* ICSR */
@@ -620,9 +628,9 @@ switch (rg) {
                 break;
 
             case 10:                                    /* Control mode bits */
-                vc_intc.mode &= ~0x60 | ((data << 3) & 0x60); /* mode<06:05> = data<03:02> */
+                vc_intc.mode &= ~ICM_M_RP | ((data << 3) & ICM_M_RP); /* mode<06:05> = data<03:02> */
                 if (((data & 0x3) == 0x1) || ((data & 0x3) == 2))
-                    vc_intc.mode &= ~0x80 | ((data << 7) & 0x80);
+                    vc_intc.mode &= ~ICM_MM | ((data << 7) & ICM_MM);
                 break;
 
             case 11:                                    /* Preselect IMR */
@@ -657,9 +665,6 @@ switch (rg) {
 
 return SCPE_OK;
 }
-
-extern jmp_buf save_env;
-extern int32 p1;
 
 int32 vc_mem_rd (int32 pa)
 {
@@ -786,7 +791,7 @@ if ((vc_dev.dctrl & DBG_CURSOR) && (vc_dev.dctrl & DBG_TCURSOR)) {
             }
         }
     }
-vid_set_cursor (visible, 16, 16, data, mask);
+vid_set_cursor (visible, 16, 16, data, mask, 0, 0);
 }
 
 void vc_checkint (void)
@@ -795,7 +800,7 @@ uint32 i;
 uint32 msk = (vc_intc.irr & ~vc_intc.imr);              /* unmasked interrutps */
 vc_icsr &= ~(ICSR_GRI|ICSR_M_IRRVEC);                   /* clear GRI & vector */
 
-if ((vc_intc.mode & 0x80) && ~(vc_intc.mode & 0x4)) {   /* group int MM & not polled */
+if ((vc_intc.mode & (ICM_MM | ICM_IM)) == ICM_MM) {     /* group int MM & not polled */
     for (i = 0; i < 8; i++) {
         if (msk & (1u << i)) {
             vc_icsr |= (ICSR_GRI | i);
@@ -860,7 +865,7 @@ for (i = 0; i < 8; i++) {
             vc_intc.isr &= ~(1u << i);
         else vc_intc.isr |= (1u << i);
         vc_checkint();
-        result = (vc_intc.vec[i] + VEC_Q);
+        result = vc_intc.vec[i];
         sim_debug (DBG_INT, &vc_dev, "Int Ack Vector: 0%03o (0x%X)\n", result, result);
         return result;
         }
@@ -871,6 +876,8 @@ return 0;                                               /* no intr req */
 
 t_stat vc_svc (UNIT *uptr)
 {
+SIM_MOUSE_EVENT mev;
+SIM_KEY_EVENT kev;
 t_bool updated = FALSE;                                 /* flag for refresh */
 uint32 lines;
 uint32 ln, col, off;
@@ -910,31 +917,35 @@ vc_cur_v = CUR_V;
 vc_cur_f = CUR_F;
 vc_cur_new_data = FALSE;
 
-xpos = vc_mpos & 0xFF;                                  /* get current mouse position */
-ypos = (vc_mpos >> 8) & 0xFF;
-dx = vid_mouse_xrel;                                    /* get relative movement */
-dy = -vid_mouse_yrel;
-if (dx > VC_MOVE_MAX)                                   /* limit movement */
-    dx = VC_MOVE_MAX;
-else if (dx < -VC_MOVE_MAX)
-    dx = -VC_MOVE_MAX;
-if (dy > VC_MOVE_MAX)
-    dy = VC_MOVE_MAX;
-else if (dy < -VC_MOVE_MAX)
-    dy = -VC_MOVE_MAX;
-xpos += dx;                                             /* add to counters */
-ypos += dy;
-vc_mpos = ((ypos & 0xFF) << 8) | (xpos & 0xFF);         /* update register */
-vid_mouse_xrel -= dx;                                   /* reset counters for next poll */
-vid_mouse_yrel += dy;
+if (vid_poll_kb (&kev) == SCPE_OK)                      /* poll keyboard */
+    lk_event (&kev);                                    /* push event */
+if (vid_poll_mouse (&mev) == SCPE_OK) {                 /* poll mouse */
+    xpos = vc_mpos & 0xFF;                              /* get current mouse position */
+    ypos = (vc_mpos >> 8) & 0xFF;
+    dx = mev.x_rel;                                     /* get relative movement */
+    dy = -mev.y_rel;
+    if (dx > VC_MOVE_MAX)                               /* limit movement */
+        dx = VC_MOVE_MAX;
+    else if (dx < -VC_MOVE_MAX)
+        dx = -VC_MOVE_MAX;
+    if (dy > VC_MOVE_MAX)
+        dy = VC_MOVE_MAX;
+    else if (dy < -VC_MOVE_MAX)
+        dy = -VC_MOVE_MAX;
+    xpos += dx;                                         /* add to counters */
+    ypos += dy;
+    vc_mpos = ((ypos & 0xFF) << 8) | (xpos & 0xFF);     /* update register */
 
-vc_csr |= (CSR_MSA | CSR_MSB | CSR_MSC);                /* reset button states */
-if (vid_mouse_b3)                                       /* set new button states */
-    vc_csr &= ~CSR_MSA;
-if (vid_mouse_b2)
-    vc_csr &= ~CSR_MSB;
-if (vid_mouse_b1)
-    vc_csr &= ~CSR_MSC;
+    vc_csr |= (CSR_MSA | CSR_MSB | CSR_MSC);            /* reset button states */
+    if (mev.b3_state)                                   /* set new button states */
+        vc_csr &= ~CSR_MSA;
+    if (mev.b2_state)
+        vc_csr &= ~CSR_MSB;
+    if (mev.b1_state)
+        vc_csr &= ~CSR_MSC;
+    
+    vs_event (&mev);                                    /* push event */
+    }
 
 lines = 0;
 for (ln = 0; ln < VC_YSIZE; ln++) {
@@ -992,7 +1003,7 @@ vc_intc.irr = 0;
 vc_intc.imr = 0xFF;
 vc_intc.isr = 0;
 vc_intc.acr = 0;
-vc_intc.mode = 0x80;
+vc_intc.mode = ICM_MM;
 vc_icsr = 0;
 
 vc_csr = (((QVMBASE >> QVMAWIDTH) & ((1<<CSR_S_MA)-1)) << CSR_V_MA) | CSR_MOD;
@@ -1015,7 +1026,7 @@ if (dptr->flags & DEV_DIS) {
     }
 
 if (!vid_active)  {
-    r = vid_open (dptr, VC_XSIZE, VC_YSIZE, vc_input_captured ? SIM_VID_INPUTCAPTURED : 0);/* display size & capture mode */
+    r = vid_open (dptr, NULL, VC_XSIZE, VC_YSIZE, vc_input_captured ? SIM_VID_INPUTCAPTURED : 0);/* display size & capture mode */
     if (r != SCPE_OK)
         return r;
     vc_buf = (uint32 *) calloc (VC_MEMSIZE, sizeof (uint32));
@@ -1056,12 +1067,12 @@ if ((vc_dev.flags & DEV_DIS) == 0) {
 return SCPE_OK;
 }
 
-t_stat vc_set_enable (UNIT *uptr, int32 val, char *cptr, void *desc)
+t_stat vc_set_enable (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 {
 return cpu_set_model (NULL, 0, (val ? "VAXSTATION" : "MICROVAX"), NULL);
 }
 
-t_stat vc_set_capture (UNIT *uptr, int32 val, char *cptr, void *desc)
+t_stat vc_set_capture (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 {
 if (vid_active)
     return sim_messagef (SCPE_ALATT, "Capture Mode Can't be changed with device enabled\n");
@@ -1069,7 +1080,7 @@ vc_input_captured = val;
 return SCPE_OK;
 }
 
-t_stat vc_show_capture (FILE* st, UNIT* uptr, int32 val, void* desc)
+t_stat vc_show_capture (FILE* st, UNIT* uptr, int32 val, CONST void* desc)
 {
 if (vc_input_captured) {
     fprintf (st, "Captured Input Mode, ");

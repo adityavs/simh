@@ -108,8 +108,6 @@
 #define UST_REV         (OP_REV)                        /* last op was rev */
 #define UST_GAP         01                              /* last op hit gap */
 
-extern int32 int_req[IPL_HLVL];
-
 uint32 ta_cs = 0;                                       /* control/status */
 uint32 ta_idb = 0;                                      /* input data buf */
 uint32 ta_odb = 0;                                      /* output data buf */
@@ -129,7 +127,7 @@ t_stat ta_rd (int32 *data, int32 PA, int32 access);
 t_stat ta_wr (int32 data, int32 PA, int32 access);
 t_stat ta_svc (UNIT *uptr);
 t_stat ta_reset (DEVICE *dptr);
-t_stat ta_attach (UNIT *uptr, char *cptr);
+t_stat ta_attach (UNIT *uptr, CONST char *cptr);
 t_stat ta_detach (UNIT *uptr);
 t_stat ta_boot (int32 unitno, DEVICE *dptr);
 void ta_go (void);
@@ -594,7 +592,7 @@ return auto_config (0, 0);
 
 /* Attach routine */
 
-t_stat ta_attach (UNIT *uptr, char *cptr)
+t_stat ta_attach (UNIT *uptr, CONST char *cptr)
 {
 t_stat r;
 
@@ -661,7 +659,6 @@ static const uint16 boot_rom[] = {
 t_stat ta_boot (int32 unitno, DEVICE *dptr)
 {
 size_t i;
-extern uint16 *M;
 
 for (i = 0; i < BOOT_LEN; i++)
     M[(BOOT_START >> 1) + i] = boot_rom[i];

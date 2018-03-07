@@ -45,7 +45,7 @@
                         - Fixed debug output of tape file positions when they 
                           are 64b.  Added more debug output after positioning
                           operations.  Also, added textual display of the 
-                          command being performed (GUS,POS,RD,WR,etc…)
+                          command being performed (GUS,POS,RD,WR,etc@)
    18-Jun-07    RMS     Added UNIT_IDLE flag to timer thread
    16-Feb-06    RMS     Revised for new magtape capacity checking
    31-Oct-05    RMS     Fixed address width for large files
@@ -84,7 +84,6 @@
 #include "pdp11_defs.h"
 #define INIT_TYPE       TQ5_TYPE
 #define INIT_CAP        TQ5_CAP
-extern uint32 cpu_opt;
 #endif
 
 #include "pdp11_uqssp.h"
@@ -118,8 +117,8 @@ extern uint32 cpu_opt;
 #define UNIT_SXC        (1 << UNIT_V_SXC)
 #define UNIT_POL        (1 << UNIT_V_POL)
 #define UNIT_TMK        (1 << UNIT_V_TMK)
-#define cpkt            u3                              /* current packet */
-#define pktq            u4                              /* packet queue */
+#define cpkt            us9                             /* current packet */
+#define pktq            us10                            /* packet queue */
 #define uf              buf                             /* settable unit flags */
 #define objp            wait                            /* object position */
 #define io_status       u5                              /* io status from callback */
@@ -245,8 +244,6 @@ static struct drvtyp drv_tab[] = {
 
 /* Data */
 
-extern int32 int_req[IPL_HLVL];
-
 uint32 tq_sa = 0;                                       /* status, addr */
 uint32 tq_saw = 0;                                      /* written data */
 uint32 tq_s1dat = 0;                                    /* S1 data */
@@ -349,13 +346,13 @@ t_stat tq_svc (UNIT *uptr);
 t_stat tq_tmrsvc (UNIT *uptr);
 t_stat tq_quesvc (UNIT *uptr);
 t_stat tq_reset (DEVICE *dptr);
-t_stat tq_attach (UNIT *uptr, char *cptr);
+t_stat tq_attach (UNIT *uptr, CONST char *cptr);
 t_stat tq_detach (UNIT *uptr);
 t_stat tq_boot (int32 unitno, DEVICE *dptr);
-t_stat tq_show_ctrl (FILE *st, UNIT *uptr, int32 val, void *desc);
-t_stat tq_show_unitq (FILE *st, UNIT *uptr, int32 val, void *desc);
-t_stat tq_set_type (UNIT *uptr, int32 val, char *cptr, void *desc);
-t_stat tq_show_type (FILE *st, UNIT *uptr, int32 val, void *desc);
+t_stat tq_show_ctrl (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+t_stat tq_show_unitq (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+t_stat tq_set_type (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+t_stat tq_show_type (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 static t_stat tq_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr);
 const char *tq_description (DEVICE *dptr);
 
@@ -570,7 +567,7 @@ struct tq_req_results {           /* intermediate State during tape motion comma
 
 t_stat tq_rd (int32 *data, int32 PA, int32 access)
 {
-sim_debug(DBG_REG, &tq_dev, "tq_rd(PA=0x%08X [%s], access=%d)\n", PA, ((PA >> 1) & 01) ? "IP" : "SA", access);
+sim_debug(DBG_REG, &tq_dev, "tq_rd(PA=0x%08X [%s], access=%d)=0x%04X\n", PA, ((PA >> 1) & 01) ? "SA" : "IP", access, ((PA >> 1) & 01) ? tq_sa : 0);
 
 switch ((PA >> 1) & 01) {                               /* decode PA<1> */
     case 0:                                             /* IP */
@@ -593,7 +590,7 @@ return SCPE_OK;
 
 t_stat tq_wr (int32 data, int32 PA, int32 access)
 {
-sim_debug(DBG_REG, &tq_dev, "tq_wr(PA=0x%08X [%s], access=%d)\n", PA, ((PA >> 1) & 01) ? "IP" : "SA", access);
+sim_debug(DBG_REG, &tq_dev, "tq_wr(PA=0x%08X [%s], access=%d, data=0x%04X)\n", PA, ((PA >> 1) & 01) ? "SA" : "IP", access, data);
 
 switch ((PA >> 1) & 01) {                               /* decode PA<1> */
 
@@ -678,8 +675,6 @@ if (tq_csta < CST_UP) {                                 /* still init? */
             else {
                 tq_s1dat = tq_saw;                      /* save data */
                 tq_dib.vec = (tq_s1dat & SA_S1H_VEC) << 2; /* get vector */
-                if (tq_dib.vec)                         /* if nz, bias */
-                    tq_dib.vec = tq_dib.vec + VEC_Q;
                 tq_sa = SA_S2 | SA_S2C_PT | SA_S2C_EC (tq_s1dat);
                 tq_csta = CST_S2;                       /* now in step 2 */
                 tq_init_int ();                         /* intr if req */
@@ -730,10 +725,14 @@ if (tq_csta < CST_UP) {                                 /* still init? */
     }                                                   /* end if */
 
 for (i = 0; i < TQ_NUMDR; i++) {                        /* chk unit q's */
+    uint16 tpkt;
+
     nuptr = tq_dev.units + i;                           /* ptr to unit */
     if (nuptr->cpkt || (nuptr->pktq == 0))
         continue;
-    pkt = tq_deqh ((uint16 *)&nuptr->pktq);             /* get top of q */
+    tpkt = nuptr->pktq;
+    pkt = tq_deqh (&tpkt);                              /* get top of q */
+    nuptr->pktq = tpkt;
     if (!tq_mscp (pkt, FALSE))                          /* process */
         return SCPE_OK;
     }
@@ -744,7 +743,7 @@ if ((pkt == 0) && tq_pip) {                             /* polling? */
         UNIT *up = tq_getucb (tq_pkt[pkt].d[CMD_UN]);
 
         if (up)
-            sim_debug (DBG_REQ, &tq_dev, "cmd=%04X(%3s), mod=%04X, unit=%d, bc=%04X%04X, ma=%04X%04X, obj=%d, pos=0x%X\n", 
+            sim_debug (DBG_REQ, &tq_dev, "cmd=%04X(%3s), mod=%04X, unit=%d, bc=%04X%04X, ma=%04X%04X, obj=%d, pos=0x%" T_ADDR_FMT "X\n", 
                     tq_pkt[pkt].d[CMD_OPC], tq_cmdname[tq_pkt[pkt].d[CMD_OPC]&0x3f],
                     tq_pkt[pkt].d[CMD_MOD], tq_pkt[pkt].d[CMD_UN],
                     tq_pkt[pkt].d[RW_BCH], tq_pkt[pkt].d[RW_BCL],
@@ -837,7 +836,7 @@ else {                                                  /* valid cmd */
     if ((uptr = tq_getucb (lu))) {                      /* valid unit? */
         if (q && (tq_cmf[cmd] & CMF_SEQ) &&             /* queueing, seq, */
             (uptr->cpkt || uptr->pktq)) {               /* and active? */
-            tq_enqt ((uint16 *)&uptr->pktq, pkt);       /* do later */
+            tq_enqt (&uptr->pktq, pkt);                 /* do later */
             return OK;
             }
 /*      if (tq_cmf[cmd] & MD_CDL)                     *//* clr cch lost? */
@@ -918,17 +917,17 @@ tpkt = 0;                                               /* set no mtch */
 if ((uptr = tq_getucb (lu))) {                          /* get unit */
     if (uptr->cpkt &&                                   /* curr pkt? */
         (GETP32 (uptr->cpkt, CMD_REFL) == ref)) {       /* match ref? */
-        tpkt = (uint16)uptr->cpkt;                      /* save match */
+        tpkt = uptr->cpkt;                              /* save match */
         uptr->cpkt = 0;                                 /* gonzo */
         sim_cancel (uptr);                              /* cancel unit */
         sim_activate (&tq_unit[TQ_QUEUE], tq_qtime);
         }
     else if (uptr->pktq &&                              /* head of q? */
         (GETP32 (uptr->pktq, CMD_REFL) == ref)) {       /* match ref? */
-        tpkt = (uint16)uptr->pktq;                      /* save match */
+        tpkt = uptr->pktq;                              /* save match */
         uptr->pktq = tq_pkt[tpkt].link;                 /* unlink */
         }
-    else if ((prv = (uint16)uptr->pktq)) {              /* srch pkt q */
+    else if ((prv = uptr->pktq)) {                      /* srch pkt q */
         while ((tpkt = tq_pkt[prv].link)) {             /* walk list */
             if (GETP32 (tpkt, RSP_REFL) == ref) {       /* match ref? */
                 tq_pkt[prv].link = tq_pkt[tpkt].link;   /* unlink */
@@ -1314,7 +1313,7 @@ struct tq_req_results *res = (struct tq_req_results *)uptr->results;
 int32 io_complete = res->io_complete;
 
 sim_debug (DBG_TRC, &tq_dev, "tq_svc(unit=%d, pkt=%d, cmd=%s, mdf=0x%0X, bc=0x%0x, phase=%s)\n",
-           uptr-tq_dev.units, pkt, tq_cmdname[tq_pkt[pkt].d[CMD_OPC]&0x3f], mdf, bc,
+           (int)(uptr-tq_dev.units), pkt, tq_cmdname[tq_pkt[pkt].d[CMD_OPC]&0x3f], mdf, bc,
            uptr->io_complete ? "bottom" : "top");
 
 res->io_complete = 0;
@@ -1506,7 +1505,7 @@ return SCPE_IOERR;
 
 t_bool tq_mot_end (UNIT *uptr, uint32 flg, uint16 sts, uint32 rsiz)
 {
-uint16 pkt = (uint16)uptr->cpkt;                        /* packet */
+uint16 pkt = uptr->cpkt;                                /* packet */
 uint32 cmd = GETP (pkt, CMD_OPC, OPC);                  /* get cmd */
 uint16 lnt = RW_LNT_T;                                  /* assume rw */
 
@@ -1643,7 +1642,7 @@ if ((tq_cflgs & CF_THS) == 0)                           /* logging? */
     return OK;
 if (!tq_deqf (&pkt))                                    /* get log pkt */
     return ERR;
-tpkt = (uint16)uptr->cpkt;                              /* rw pkt */
+tpkt = uptr->cpkt;                                      /* rw pkt */
 lu = tq_pkt[tpkt].d[CMD_UN];                            /* unit # */
 
 tq_pkt[pkt].d[ELP_REFL] = tq_pkt[tpkt].d[CMD_REFL];     /* copy cmd ref */
@@ -1679,7 +1678,7 @@ if ((tq_cflgs & CF_THS) == 0)                           /* logging? */
     return OK;
 if (!tq_deqf (&pkt))                                    /* get log pkt */
     return ERR;
-tpkt = (uint16)uptr->cpkt;                              /* rw pkt */
+tpkt = uptr->cpkt;                                      /* rw pkt */
 tq_pkt[pkt].d[ELP_REFL] = tq_pkt[tpkt].d[CMD_REFL];     /* copy cmd ref */
 tq_pkt[pkt].d[ELP_REFH] = tq_pkt[tpkt].d[CMD_REFH];     /* copy cmd ref */
 tq_pkt[pkt].d[ELP_UN] = tq_pkt[tpkt].d[CMD_UN];         /* copy unit */
@@ -1824,7 +1823,7 @@ UNIT *up = tq_getucb (tq_pkt[pkt].d[CMD_UN]);
 if (pkt == 0)                                           /* any packet? */
     return OK;
 if (up)
-    sim_debug (DBG_REQ, &tq_dev, "rsp=%04X, sts=%04X, rszl=%04X, obj=%d, pos=%d\n", 
+    sim_debug (DBG_REQ, &tq_dev, "rsp=%04X, sts=%04X, rszl=%04X, obj=%d, pos=%" T_ADDR_FMT "d\n", 
                                tq_pkt[pkt].d[RSP_OPF], tq_pkt[pkt].d[RSP_STS], tq_pkt[pkt].d[RW_RSZL],
                                up->objp, up->pos);
 else
@@ -2027,7 +2026,7 @@ return ERR;
 
 /* Device attach */
 
-t_stat tq_attach (UNIT *uptr, char *cptr)
+t_stat tq_attach (UNIT *uptr, CONST char *cptr)
 {
 t_stat r;
 
@@ -2212,7 +2211,6 @@ static const uint16 boot_rom[] = {
 t_stat tq_boot (int32 unitno, DEVICE *dptr)
 {
 size_t i;
-extern uint16 *M;
 
 for (i = 0; i < BOOT_LEN; i++)
     M[(BOOT_START >> 1) + i] = boot_rom[i];
@@ -2282,7 +2280,7 @@ for (i = 0; i < TQ_SH_MAX; i = i + TQ_SH_PPL) {
 return;
 }
 
-t_stat tq_show_unitq (FILE *st, UNIT *uptr, int32 val, void *desc)
+t_stat tq_show_unitq (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 {
 int32 pkt, u = uptr - tq_dev.units;
 
@@ -2310,7 +2308,7 @@ else fprintf (st, "Unit %d queues are empty\n", u);
 return SCPE_OK;
 }
 
-t_stat tq_show_ctrl (FILE *st, UNIT *uptr, int32 val, void *desc)
+t_stat tq_show_ctrl (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 {
 int32 i, pkt;
 
@@ -2358,7 +2356,7 @@ return SCPE_OK;
 
 /* Set controller type (and capacity for user-defined type) */
 
-t_stat tq_set_type (UNIT *uptr, int32 val, char *cptr, void *desc)
+t_stat tq_set_type (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 {
 uint32 i, cap;
 uint32 max = sim_taddr_64? TQU_EMAXC: TQU_MAXC;
@@ -2384,7 +2382,7 @@ return SCPE_OK;
 
 /* Show controller type and capacity */
 
-t_stat tq_show_type (FILE *st, UNIT *uptr, int32 val, void *desc)
+t_stat tq_show_type (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 {
 fprintf (st, "%s (%dMB)", drv_tab[tq_typ].name, (uint32) (drv_tab[tq_typ].cap >> 20));
 return SCPE_OK;

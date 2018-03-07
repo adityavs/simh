@@ -1,6 +1,6 @@
 /* vax780_uba.c: VAX 11/780 Unibus adapter
 
-   Copyright (c) 2004-2012, Robert M Supnik
+   Copyright (c) 2004-2017, Robert M Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -25,6 +25,7 @@
 
    uba                  DW780 Unibus adapter
 
+   13-Mar-17    RMS     Fixed bad test for UBA intr level (COVERITY)
    25-Mar-12    RMS     Added parameter to int_ack prototype (Mark Pizzolata)
    19-Nov-08    RMS     Moved I/O support routines to I/O library
    28-May-08    RMS     Inlined physical memory routines
@@ -122,6 +123,7 @@
 
 #define UBABRRVR_OF     0x0C
 #define UBA_UVEC        0x80000000
+#define UBA_VEC_MASK    0x1FC                           /* Vector value mask */
 
 /* Data path registers */
 
@@ -176,10 +178,6 @@ uint32 uba_aitime = 250;                                /* adapter init time */
 uint32 uba_uitime = 12250;                              /* Unibus init time */
 int32 autcon_enb = 1;                                   /* autoconfig enable */
 
-extern int32 trpirq;
-extern int32 autcon_enb;
-extern jmp_buf save_env;
-extern UNIT cpu_unit;
 extern uint32 nexus_req[NEXUS_HLVL];
 
 t_stat uba_svc (UNIT *uptr);
@@ -199,10 +197,10 @@ void uba_adap_clr_int ();
 void uba_set_dpr (uint32 ua, t_bool wr);
 void uba_ubpdn (int32 time);
 t_bool uba_map_addr (uint32 ua, uint32 *ma);
-t_stat set_autocon (UNIT *uptr, int32 val, char *cptr, void *desc);
-t_stat show_autocon (FILE *st, UNIT *uptr, int32 val, void *desc);
-t_stat show_iospace (FILE *st, UNIT *uptr, int32 val, void *desc);
-t_stat uba_show_virt (FILE *st, UNIT *uptr, int32 val, void *desc);
+t_stat set_autocon (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+t_stat show_autocon (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+t_stat show_iospace (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+t_stat uba_show_virt (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 
 extern int32 eval_int (void);
 extern t_stat build_dib_tab (void);
@@ -585,7 +583,7 @@ int32 uba_get_ubvector (int32 lvl)
 int32 i, vec;
 
 vec = 0;
-if ((lvl == (IPL_UBA - IPL_HMIN)) && uba_int) {         /* UBA lvl, int? */
+if ((lvl == IPL_UBA) && uba_int) {                      /* UBA lvl, int? */
     vec = UBA_UVEC;                                     /* set flag */
     uba_int = 0;                                        /* clear int */
     }
@@ -595,8 +593,8 @@ if (((uba_dr & UBADR_DINTR) == 0) && !uba_uiip &&       /* intr enabled? */
         if ((int_req[lvl] >> i) & 1) {
             int_req[lvl] = int_req[lvl] & ~(1u << i);
             if (int_ack[lvl][i])
-                return (vec | int_ack[lvl][i]());
-            return (vec | int_vec[lvl][i]);
+                return ((UBA_VEC_MASK|UBA_UVEC) & (vec | int_ack[lvl][i]()));
+            return ((UBA_VEC_MASK|UBA_UVEC) & (vec | int_vec[lvl][i]));
             }
         }
     }
@@ -685,7 +683,7 @@ for (i = 0; i < bc; i = i + pbc) {                      /* loop by pages */
 return 0;
 }
 
-int32 Map_WriteB (uint32 ba, int32 bc, uint8 *buf)
+int32 Map_WriteB (uint32 ba, int32 bc, const uint8 *buf)
 {
 int32 i, j, pbc;
 uint32 ma, dat;
@@ -719,7 +717,7 @@ for (i = 0; i < bc; i = i + pbc) {                      /* loop by pages */
 return 0;
 }
 
-int32 Map_WriteW (uint32 ba, int32 bc, uint16 *buf)
+int32 Map_WriteW (uint32 ba, int32 bc, const uint16 *buf)
 {
 int32 i, j, pbc;
 uint32 ma, dat;
@@ -986,10 +984,10 @@ return SCPE_NXM;
 
 /* Show UBA virtual address */
 
-t_stat uba_show_virt (FILE *of, UNIT *uptr, int32 val, void *desc)
+t_stat uba_show_virt (FILE *of, UNIT *uptr, int32 val, CONST void *desc)
 {
 t_stat r;
-char *cptr = (char *) desc;
+const char *cptr = (const char *) desc;
 uint32 ua, pa;
 
 if (cptr) {

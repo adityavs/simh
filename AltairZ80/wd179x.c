@@ -148,8 +148,8 @@ typedef struct {
 
 static SECTOR_FORMAT sdata;
 extern uint32 PCX;
-extern t_stat set_iobase(UNIT *uptr, int32 val, char *cptr, void *desc);
-extern t_stat show_iobase(FILE *st, UNIT *uptr, int32 val, void *desc);
+extern t_stat set_iobase(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+extern t_stat show_iobase(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 extern uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
         int32 (*routine)(const int32, const int32, const int32), uint8 unmap);
 extern int32 find_unit_index (UNIT *uptr);
@@ -195,6 +195,7 @@ extern uint8 GetBYTEWrapper(const uint32 Addr);
 
 static int32 wd179xdev(const int32 port, const int32 io, const int32 data);
 static t_stat wd179x_reset(DEVICE *dptr);
+static const char* wd179x_description(DEVICE *dptr);
 uint8 floorlog2(unsigned int n);
 
 WD179X_INFO wd179x_info_data = { { 0x0, 0, 0x30, 4 } };
@@ -208,7 +209,11 @@ static UNIT wd179x_unit[] = {
     { UDATA (&wd179x_svc, UNIT_FIX + UNIT_ATTABLE + UNIT_DISABLE + UNIT_ROABLE, WD179X_CAPACITY), 58200 }
 };
 
-#define WD179X_NAME "Western Digital FDC Core WD179X"
+#define WD179X_NAME "Western Digital FDC Core"
+
+static const char* wd179x_description(DEVICE *dptr) {
+    return WD179X_NAME;
+}
 
 static MTAB wd179x_mod[] = {
     { MTAB_XTD|MTAB_VDV,    0,                      "IOBASE",   "IOBASE",
@@ -245,7 +250,7 @@ DEVICE wd179x_dev = {
     NULL, NULL, &wd179x_reset,
     NULL, &wd179x_attach, &wd179x_detach,
     &wd179x_info_data, (DEV_DISABLE | DEV_DIS | DEV_DEBUG), ERROR_MSG,
-    wd179x_dt, NULL, WD179X_NAME
+    wd179x_dt, NULL, NULL, NULL, NULL, NULL, &wd179x_description
 };
 
 /* Unit service routine */
@@ -305,7 +310,7 @@ void wd179x_external_restore(void)
 }
 
 /* Attach routine */
-t_stat wd179x_attach(UNIT *uptr, char *cptr)
+t_stat wd179x_attach(UNIT *uptr, CONST char *cptr)
 {
     char header[4];
     t_stat r;
@@ -1107,7 +1112,7 @@ uint8 WD179X_Write(const uint32 Addr, uint8 cData)
                                       " FORMAT T:%d/H:%d/N:%d=%d/L=%d[%d] Fill=0x%02x\n", PCX,
                                       pDrive->track, wd179x_info->fdc_head,
                                       wd179x_info->fdc_fmt_sector_count,
-                                      wd179x_info->fdc_sectormap[wd179x_info->fdc_fmt_sector_count],
+                                      wd179x_info->fdc_sectormap[wd179x_info->fdc_fmt_sector_count - 1],
                                       wd179x_info->fdc_dataindex, wd179x_info->fdc_sec_len, sdata.raw[0]);
 
                             wd179x_info->fdc_gap[1] = 0;

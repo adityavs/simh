@@ -1,6 +1,6 @@
 /* pdp11_sys.c: PDP-11 simulator interface
 
-   Copyright (c) 1993-2013, Robert M Supnik
+   Copyright (c) 1993-2016, Robert M Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -23,6 +23,7 @@
    used in advertising or otherwise to promote the sale, use or other dealings
    in this Software without prior written authorization from Robert M Supnik.
 
+   14-Mar-16    RMS     Added UC15 support
    02-Sep-13    RMS     Added third Massbus, RS03/RS04
    29-Apr-12    RMS     Fixed compiler warning (Mark Pizzolato)
    19-Nov-08    RMS     Moved I/O support routines to I/O library
@@ -82,6 +83,7 @@ extern DEVICE dli_dev;
 extern DEVICE dlo_dev;
 extern DEVICE dci_dev;
 extern DEVICE dco_dev;
+extern DEVICE tdc_dev;
 extern DEVICE dz_dev;
 extern DEVICE vh_dev;
 extern DEVICE dt_dev;
@@ -112,9 +114,8 @@ extern DEVICE dmc_dev;
 extern DEVICE dup_dev;
 extern DEVICE dpv_dev;
 extern DEVICE kmc_dev;
-extern UNIT cpu_unit;
+extern DEVICE uca_dev, ucb_dev;
 extern REG cpu_reg[];
-extern uint16 *M;
 extern int32 saved_PC;
 
 /* SCP data structures and interface routines
@@ -136,6 +137,7 @@ int32 sim_emax = 4;
 DEVICE *sim_devices[] = {
     &cpu_dev,
     &sys_dev,
+#if !defined (UC15)
     &mba_dev[0],
     &mba_dev[1],
     &mba_dev[2],
@@ -145,6 +147,7 @@ DEVICE *sim_devices[] = {
     &ptp_dev,
     &tti_dev,
     &tto_dev,
+    &tdc_dev,
     &cr_dev,
     &lpt_dev,
     &dli_dev,
@@ -179,12 +182,22 @@ DEVICE *sim_devices[] = {
     &xqb_dev,
     &xu_dev,
     &xub_dev,
-    &ke_dev,
     &kg_dev,
     &dmc_dev,
     &dup_dev,
     &dpv_dev,
     &kmc_dev,
+    &ke_dev,
+#else
+    &clk_dev,
+    &tti_dev,
+    &tto_dev,
+    &cr_dev,
+    &lpt_dev,
+    &rk_dev,
+    &uca_dev,
+    &ucb_dev,
+#endif
     NULL
     };
 
@@ -236,17 +249,19 @@ const char *sim_stop_messages[] = {
    the PC at which to start the program.
 */
 
-t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int flag)
+t_stat sim_load (FILE *fileref, CONST char *cptr, CONST char *fnam, int flag)
 {
 int32 c[6], d, i, cnt, csum;
 uint32 org;
 
-if ((*cptr != 0) || (flag != 0))
+if (*cptr != 0)
     return SCPE_ARG;
+if (flag != 0)
+    return sim_messagef (SCPE_NOFNC, "Command Not Implemented\n");
 do {                                                    /* block loop */
     csum = 0;                                           /* init checksum */
     for (i = 0; i < 6; ) {                              /* 6 char header */
-        if ((c[i] = getc (fileref)) == EOF)
+        if ((c[i] = Fgetc (fileref)) == EOF)
             return SCPE_FMT;
         if ((i != 0) || (c[i] == 1))                    /* 1st must be 1 */
             csum = csum + c[i++];                       /* add into csum */
@@ -261,17 +276,15 @@ do {                                                    /* block loop */
         return SCPE_OK;
         }
     for (i = 6; i < cnt; i++) {                         /* exclude hdr */
-        if ((d = getc (fileref)) == EOF)                /* data char */
+        if ((d = Fgetc (fileref)) == EOF)                /* data char */
             return SCPE_FMT;
         csum = csum + d;                                /* add into csum */
-        if (org >= MEMSIZE)                             /* invalid addr? */
+        if (!ADDR_IS_MEM (org))                         /* invalid addr? */
             return SCPE_NXM;
-        M[org >> 1] = (org & 1)?                        /* store data */
-            (M[org >> 1] & 0377) | (uint16)(d << 8):
-            (M[org >> 1] & 0177400) | (uint16)d;
+        WrMemB (org, ((uint16) d));
         org = (org + 1) & 0177777;                      /* inc origin */
         }
-    if ((d = getc (fileref)) == EOF)                    /* get csum */
+    if ((d = Fgetc (fileref)) == EOF)                    /* get csum */
         return SCPE_FMT;
     csum = csum + d;                                    /* add in */
     } while ((csum & 0377) == 0);                       /* result mbz */
@@ -492,11 +505,6 @@ static const char r50_to_asc[] = " ABCDEFGHIJKLMNOPQRSTUVWXYZ$._0123456789";
    Outputs:
         count   =       -number of extra words retired
 */
-
-/* Use scp.c provided fprintf function */
-#define fprintf Fprintf
-#define fputs(_s,f) Fprintf(f,"%s",_s)
-#define fputc(_c,f) Fprintf(f,"%c",_c)
 
 int32 fprint_spec (FILE *of, t_addr addr, int32 spec, t_value nval,
     int32 flag, int32 iflag)
@@ -928,7 +936,7 @@ switch (pflag) {                                        /* case on syntax */
                         <= 0  -number of extra words
 */
 
-t_stat parse_sym (char *cptr, t_addr addr, UNIT *uptr, t_value *val, int32 sw)
+t_stat parse_sym (CONST char *cptr, t_addr addr, UNIT *uptr, t_value *val, int32 sw)
 {
 int32 bflag, cflag, d, i, j, reg, spec, n1, n2, disp, pflag;
 t_value by;

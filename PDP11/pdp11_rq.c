@@ -114,7 +114,6 @@ extern int32 fault_PC;
 #define RQ_XTIME        500
 #define OLDPC           MMR2
 extern int32 MMR2;
-extern uint32 cpu_opt;
 #endif
 
 #if !defined (RQ_NUMCT)
@@ -155,20 +154,20 @@ extern uint32 cpu_opt;
 #define RQ_MAPXFER      (1u << 31)                      /* mapped xfer */
 #define RQ_M_PFN        0x1FFFFF                        /* map entry PFN */
 
-#define UNIT_V_ONL      (UNIT_V_UF + 0)                 /* online */
-#define UNIT_V_WLK      (UNIT_V_UF + 1)                 /* hwre write lock */
-#define UNIT_V_ATP      (UNIT_V_UF + 2)                 /* attn pending */
-#define UNIT_V_DTYPE    (UNIT_V_UF + 3)                 /* drive type */
+#define UNIT_V_ONL      (DKUF_V_UF + 0)                 /* online */
+#define UNIT_V_WLK      (DKUF_V_UF + 1)                 /* hwre write lock */
+#define UNIT_V_ATP      (DKUF_V_UF + 2)                 /* attn pending */
+#define UNIT_V_DTYPE    (DKUF_V_UF + 3)                 /* drive type */
 #define UNIT_M_DTYPE    0x1F
-#define UNIT_V_NOAUTO   (UNIT_V_UF + 8)                 /* noautosize */
+#define UNIT_V_NOAUTO   (DKUF_V_UF + 8)                 /* noautosize */
 #define UNIT_ONL        (1 << UNIT_V_ONL)
 #define UNIT_WLK        (1 << UNIT_V_WLK)
 #define UNIT_ATP        (1 << UNIT_V_ATP)
 #define UNIT_NOAUTO     (1 << UNIT_V_NOAUTO)
 #define UNIT_DTYPE      (UNIT_M_DTYPE << UNIT_V_DTYPE)
 #define GET_DTYPE(x)    (((x) >> UNIT_V_DTYPE) & UNIT_M_DTYPE)
-#define cpkt            u3                              /* current packet */
-#define pktq            u4                              /* packet queue */
+#define cpkt            us9                             /* current packet */
+#define pktq            us10                            /* packet queue */
 #define uf              buf                             /* settable unit flags */
 #define cnum            wait                            /* controller index */
 #define io_status       u5                              /* io status from callback */
@@ -752,9 +751,7 @@ static struct ctlrtyp ctlr_tab[] = {
     { 0 }
     };
 
-extern int32 int_req[IPL_HLVL];
-
-int32 rq_itime = 200;                                   /* init time, except */
+int32 rq_itime = 450;                                   /* init time, except */
 int32 rq_itime4 = 10;                                   /* stage 4 */
 int32 rq_qtime = RQ_QTIME;                              /* queue time */
 int32 rq_xtime = RQ_XTIME;                              /* transfer time */
@@ -793,12 +790,12 @@ typedef struct {
 #define DBG_DAT  0x0020                                 /* display transfer data */
 
 DEBTAB rq_debug[] = {
-  {"TRACE",  DBG_TRC},
-  {"INIT",   DBG_INI},
-  {"REG",    DBG_REG},
-  {"REQ",    DBG_REQ},
-  {"DISK",   DBG_DSK},
-  {"DATA",   DBG_DAT},
+  {"TRACE",  DBG_TRC, "trace routine calls"},
+  {"INIT",   DBG_INI, "display setup/init sequence info"},
+  {"REG",    DBG_REG, "trace read/write registers"},
+  {"REQ",    DBG_REQ, "display transfer requests"},
+  {"DISK",   DBG_DSK, "display sim_disk activities"},
+  {"DATA",   DBG_DAT, "display transfer data"},
   {0}
 };
 
@@ -839,17 +836,17 @@ t_stat rq_svc (UNIT *uptr);
 t_stat rq_tmrsvc (UNIT *uptr);
 t_stat rq_quesvc (UNIT *uptr);
 t_stat rq_reset (DEVICE *dptr);
-t_stat rq_attach (UNIT *uptr, char *cptr);
+t_stat rq_attach (UNIT *uptr, CONST char *cptr);
 t_stat rq_detach (UNIT *uptr);
 t_stat rq_boot (int32 unitno, DEVICE *dptr);
-t_stat rq_set_wlk (UNIT *uptr, int32 val, char *cptr, void *desc);
-t_stat rq_set_type (UNIT *uptr, int32 val, char *cptr, void *desc);
-t_stat rq_set_ctype (UNIT *uptr, int32 val, char *cptr, void *desc);
-t_stat rq_show_type (FILE *st, UNIT *uptr, int32 val, void *desc);
-t_stat rq_show_ctype (FILE *st, UNIT *uptr, int32 val, void *desc);
-t_stat rq_show_wlk (FILE *st, UNIT *uptr, int32 val, void *desc);
-t_stat rq_show_ctrl (FILE *st, UNIT *uptr, int32 val, void *desc);
-t_stat rq_show_unitq (FILE *st, UNIT *uptr, int32 val, void *desc);
+t_stat rq_set_wlk (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+t_stat rq_set_type (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+t_stat rq_set_ctype (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+t_stat rq_show_type (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+t_stat rq_show_ctype (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+t_stat rq_show_wlk (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+t_stat rq_show_ctrl (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+t_stat rq_show_unitq (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 t_stat rq_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr);
 const char *rq_description (DEVICE *dptr);
 
@@ -1044,14 +1041,14 @@ MTAB rq_mod[] = {
       &rq_set_type, NULL, NULL, "Set RCF25 Disk Type" },
     { MTAB_XTD|MTAB_VUN, RA80_DTYPE, NULL, "RA80",
       &rq_set_type, NULL, NULL, "Set RA80 Disk Type" },
-    { MTAB_XTD|MTAB_VUN|MTAB_VALR, RA8U_DTYPE, NULL, "RAUSER=SIZE",
-      &rq_set_type, NULL, NULL, "Set RAUSER=size Disk Type" },
+    { MTAB_XTD|MTAB_VUN|MTAB_VALR, RA8U_DTYPE, NULL, "RAUSER=SizeInMB",
+      &rq_set_type, NULL, NULL, "Set RAUSER Disk Type and its size" },
     { MTAB_XTD|MTAB_VUN, 0, "TYPE", NULL,
       NULL, &rq_show_type, NULL, "Display device type" },
     { UNIT_NOAUTO, UNIT_NOAUTO, "noautosize", "NOAUTOSIZE", NULL, NULL, NULL, "Disables disk autosize on attach" },
     { UNIT_NOAUTO,           0, "autosize",   "AUTOSIZE",   NULL, NULL, NULL, "Enables disk autosize on attach" },
     { MTAB_XTD|MTAB_VUN|MTAB_VALR, 0, "FORMAT", "FORMAT={SIMH|VHD|RAW}",
-      &sim_disk_set_fmt, &sim_disk_show_fmt, NULL, "Display disk format" },
+      &sim_disk_set_fmt, &sim_disk_show_fmt, NULL, "Set/Display disk format" },
 #if defined (VM_PDP11)
     { MTAB_XTD|MTAB_VDV|MTAB_VALR, 004, "ADDRESS", "ADDRESS",
       &set_addr, &show_addr, NULL, "Bus address" },
@@ -1320,13 +1317,16 @@ static MSC *rq_ctxmap[RQ_NUMCT] = {
 t_stat rq_rd (int32 *data, int32 PA, int32 access)
 {
 int32 cidx = rq_map_pa ((uint32) PA);
-MSC *cp = rq_ctxmap[cidx];
-DEVICE *dptr = rq_devmap[cidx];
-
-sim_debug(DBG_REG, dptr, "rq_rd(PA=0x%08X [%s], access=%d)\n", PA, ((PA >> 1) & 01) ? "IP" : "SA", access);
+MSC *cp;
+DEVICE *dptr;
 
 if (cidx < 0)
     return SCPE_IERR;
+cp = rq_ctxmap[cidx];
+dptr = rq_devmap[cidx];
+
+sim_debug(DBG_REG, dptr, "rq_rd(PA=0x%08X [%s], access=%d)=0x%04X\n", PA, ((PA >> 1) & 01) ? "SA" : "IP", access, ((PA >> 1) & 01) ? cp->sa : 0);
+
 switch ((PA >> 1) & 01) {                               /* decode PA<1> */
 
     case 0:                                             /* IP */
@@ -1350,13 +1350,15 @@ return SCPE_OK;
 t_stat rq_wr (int32 data, int32 PA, int32 access)
 {
 int32 cidx = rq_map_pa ((uint32) PA);
-MSC *cp = rq_ctxmap[cidx];
-DEVICE *dptr = rq_devmap[cidx];
+MSC *cp;
+DEVICE *dptr;
 
 if (cidx < 0)
     return SCPE_IERR;
+cp = rq_ctxmap[cidx];
+dptr = rq_devmap[cidx];
 
-sim_debug(DBG_REG, dptr, "rq_wr(PA=0x%08X [%s], access=%d)\n", PA, ((PA >> 1) & 01) ? "IP" : "SA", access);
+sim_debug(DBG_REG, dptr, "rq_wr(PA=0x%08X [%s], access=%d, data=0x%04X)\n", PA, ((PA >> 1) & 01) ? "SA" : "IP", access, data);
 
 switch ((PA >> 1) & 01) {                               /* decode PA<1> */
 
@@ -1465,8 +1467,6 @@ if (cp->csta < CST_UP) {                                /* still init? */
             else {
                 cp->s1dat = cp->saw;                    /* save data */
                 dibp->vec = (cp->s1dat & SA_S1H_VEC) << 2; /* get vector */
-                if (dibp->vec)                          /* if nz, bias */
-                    dibp->vec = dibp->vec + VEC_Q;
                 cp->sa = SA_S2 | SA_S2C_PT | SA_S2C_EC (cp->s1dat);
                 cp->csta = CST_S2;                      /* now in step 2 */
                 rq_init_int (cp);                       /* intr if req */
@@ -1521,7 +1521,7 @@ for (i = 0; i < RQ_NUMDR; i++) {                        /* chk unit q's */
     nuptr = dptr->units + i;                            /* ptr to unit */
     if (nuptr->cpkt || (nuptr->pktq == 0))
         continue;
-    pkt = rq_deqh (cp, (uint16 *)&nuptr->pktq);                   /* get top of q */
+    pkt = rq_deqh (cp, &nuptr->pktq);                   /* get top of q */
     if (!rq_mscp (cp, pkt, FALSE))                      /* process */
         return SCPE_OK;
     }
@@ -1663,17 +1663,17 @@ tpkt = 0;                                               /* set no mtch */
 if ((uptr = rq_getucb (cp, lu))) {                      /* get unit */
     if (uptr->cpkt &&                                   /* curr pkt? */
         (GETP32 (uptr->cpkt, CMD_REFL) == ref)) {       /* match ref? */
-        tpkt = (uint16)uptr->cpkt;                      /* save match */
+        tpkt = uptr->cpkt;                              /* save match */
         uptr->cpkt = 0;                                 /* gonzo */
         sim_cancel (uptr);                              /* cancel unit */
         sim_activate (dptr->units + RQ_QUEUE, rq_qtime);
         }
     else if (uptr->pktq &&                              /* head of q? */
         (GETP32 (uptr->pktq, CMD_REFL) == ref)) {       /* match ref? */
-        tpkt = (uint16)uptr->pktq;                      /* save match */
+        tpkt = uptr->pktq;                              /* save match */
         uptr->pktq = cp->pak[tpkt].link;                /* unlink */
         }
-    else if ((prv = (uint16)uptr->pktq)) {              /* srch pkt q */
+    else if ((prv = uptr->pktq)) {                      /* srch pkt q */
         while ((tpkt = cp->pak[prv].link)) {            /* walk list */
             if (GETP32 (tpkt, RSP_REFL) == ref) {       /* match? unlink */
                 cp->pak[prv].link = cp->pak[tpkt].link;
@@ -1707,7 +1707,7 @@ sim_debug (DBG_TRC, rq_devmap[cp->cnum], "rq_avl\n");
 
 if ((uptr = rq_getucb (cp, lu))) {                      /* unit exist? */
     if (q && uptr->cpkt) {                              /* need to queue? */
-        rq_enqt (cp, (uint16 *)&uptr->pktq, pkt);                 /* do later */
+        rq_enqt (cp, &uptr->pktq, pkt);                 /* do later */
         return OK;
         }
     uptr->flags = uptr->flags & ~UNIT_ONL;              /* not online */
@@ -1804,7 +1804,7 @@ sim_debug (DBG_TRC, rq_devmap[cp->cnum], "rq_onl\n");
 
 if ((uptr = rq_getucb (cp, lu))) {                      /* unit exist? */
     if (q && uptr->cpkt) {                              /* need to queue? */
-        rq_enqt (cp, (uint16 *)&uptr->pktq, pkt);       /* do later */
+        rq_enqt (cp, &uptr->pktq, pkt);                 /* do later */
         return OK;
         }
     if ((uptr->flags & UNIT_ATT) == 0)                  /* not attached? */
@@ -1876,7 +1876,7 @@ sim_debug (DBG_TRC, rq_devmap[cp->cnum], "rq_suc\n");
 
 if ((uptr = rq_getucb (cp, lu))) {                      /* unit exist? */
     if (q && uptr->cpkt) {                              /* need to queue? */
-        rq_enqt (cp, (uint16 *)&uptr->pktq, pkt);       /* do later */
+        rq_enqt (cp, &uptr->pktq, pkt);                 /* do later */
         return OK;
         }
     if ((uptr->flags & UNIT_ATT) == 0)                  /* not attached? */
@@ -1907,7 +1907,7 @@ sim_debug (DBG_TRC, rq_devmap[cp->cnum], "rq_fmt\n");
 
 if ((uptr = rq_getucb (cp, lu))) {                      /* unit exist? */
     if (q && uptr->cpkt) {                              /* need to queue? */
-        rq_enqt (cp, (uint16 *)&uptr->pktq, pkt);       /* do later */
+        rq_enqt (cp, &uptr->pktq, pkt);                 /* do later */
         return OK;
         }
     if (GET_DTYPE (uptr->flags) != RX33_DTYPE)          /* RX33? */
@@ -1943,8 +1943,12 @@ sim_debug (DBG_TRC, rq_devmap[cp->cnum], "rq_rw(lu=%d, pkt=%d, queue=%s)\n", lu,
 
 if ((uptr = rq_getucb (cp, lu))) {                      /* unit exist? */
     if (q && uptr->cpkt) {                              /* need to queue? */
+        uint16 tpktq = uptr->pktq;
+
         sim_debug (DBG_TRC, rq_devmap[cp->cnum], "rq_rw - queued\n");
-        rq_enqt (cp, (uint16 *)&uptr->pktq, pkt);       /* do later */
+
+        rq_enqt (cp, &tpktq, pkt);                      /* do later */
+        uptr->pktq = tpktq;
         return OK;
         }
     sts = rq_rw_valid (cp, pkt, uptr, cmd);             /* validity checks */
@@ -2126,18 +2130,20 @@ MSC *cp = rq_ctxmap[uptr->cnum];
 uint32 i, t, tbc, abc, wwc;
 uint32 err = 0;
 int32 pkt = uptr->cpkt;                                 /* get packet */
-uint32 cmd = GETP (pkt, CMD_OPC, OPC);                  /* get cmd */
-uint32 ba = GETP32 (pkt, RW_WBAL);                      /* buf addr */
-uint32 bc = GETP32 (pkt, RW_WBCL);                      /* byte count */
-uint32 bl = GETP32 (pkt, RW_WBLL);                      /* block addr */
-uint32 ma = GETP32 (pkt, RW_WMPL);                      /* block addr */
-
-sim_debug (DBG_TRC, rq_devmap[cp->cnum], "rq_svc(unit=%d, pkt=%d, cmd=%s, lbn=%0X, bc=%0x, phase=%s)\n",
-           uptr-rq_devmap[cp->cnum]->units, pkt, rq_cmdname[cp->pak[pkt].d[CMD_OPC]&0x3f], bl, bc,
-           uptr->io_complete ? "bottom" : "top");
+uint32 cmd, ba, bc, bl, ma;
 
 if ((cp == NULL) || (pkt == 0))                         /* what??? */
     return STOP_RQ;
+cmd = GETP (pkt, CMD_OPC, OPC);                         /* get cmd */
+ba = GETP32 (pkt, RW_WBAL);                             /* buf addr */
+bc = GETP32 (pkt, RW_WBCL);                             /* byte count */
+bl = GETP32 (pkt, RW_WBLL);                             /* block addr */
+ma = GETP32 (pkt, RW_WMPL);                             /* block addr */
+
+sim_debug (DBG_TRC, rq_devmap[cp->cnum], "rq_svc(unit=%d, pkt=%d, cmd=%s, lbn=%0X, bc=%0x, phase=%s)\n",
+           (int)(uptr-rq_devmap[cp->cnum]->units), pkt, rq_cmdname[cp->pak[pkt].d[CMD_OPC]&0x3f], bl, bc,
+           uptr->io_complete ? "bottom" : "top");
+
 tbc = (bc > RQ_MAXFR)? RQ_MAXFR: bc;                    /* trim cnt to max */
 
 if ((uptr->flags & UNIT_ATT) == 0) {                    /* not attached? */
@@ -2256,7 +2262,7 @@ return SCPE_OK;
 
 t_bool rq_rw_end (MSC *cp, UNIT *uptr, uint16 flg, uint16 sts)
 {
-uint16 pkt = (uint16)uptr->cpkt;                        /* packet */
+uint16 pkt = uptr->cpkt;                                /* packet */
 uint16 cmd = GETP (pkt, CMD_OPC, OPC);                  /* get cmd */
 uint32 bc = GETP32 (pkt, RW_BCL);                       /* init bc */
 uint32 wbc = GETP32 (pkt, RW_WBCL);                     /* work bc */
@@ -2296,7 +2302,7 @@ if ((cp->cflgs & CF_THS) == 0)                          /* logging? */
     return OK;
 if (!rq_deqf (cp, &pkt))                                /* get log pkt */
     return ERR;
-tpkt = (uint16)uptr->cpkt;                              /* rw pkt */
+tpkt = uptr->cpkt;                                      /* rw pkt */
 lu = cp->pak[tpkt].d[CMD_UN];                           /* unit # */
 lbn = GETP32 (tpkt, RW_WBLL);                           /* recent LBN */
 dtyp = GET_DTYPE (uptr->flags);                         /* drv type */
@@ -2350,7 +2356,7 @@ if ((cp->cflgs & CF_THS) == 0)                          /* logging? */
     return OK;
 if (!rq_deqf (cp, &pkt))                                /* get log pkt */
     return ERR;
-tpkt = (uint16)uptr->cpkt;                              /* rw pkt */
+tpkt = uptr->cpkt;                                      /* rw pkt */
 cp->pak[pkt].d[ELP_REFL] = cp->pak[tpkt].d[CMD_REFL];   /* copy cmd ref */
 cp->pak[pkt].d[ELP_REFH] = cp->pak[tpkt].d[CMD_REFH];
 cp->pak[pkt].d[ELP_UN] = cp->pak[tpkt].d[CMD_UN];       /* copy unit */
@@ -2514,7 +2520,8 @@ if (!rq_getdesc (cp, &cp->rq, &desc))                   /* get rsp desc */
 if ((desc & UQ_DESC_OWN) == 0) {                        /* not valid? */
     if (qt)                                             /* normal? q tail */
         rq_enqt (cp, &cp->rspq, pkt);
-    else rq_enqh (cp, &cp->rspq, pkt);                  /* resp q call */
+    else
+        rq_enqh (cp, &cp->rspq, pkt);                   /* resp q call */
     sim_activate (dptr->units + RQ_QUEUE, rq_qtime);    /* activate q thrd */
     return OK;
     }
@@ -2742,7 +2749,7 @@ return ERR;
 
 /* Set/clear hardware write lock */
 
-t_stat rq_set_wlk (UNIT *uptr, int32 val, char *cptr, void *desc)
+t_stat rq_set_wlk (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 {
 uint32 dtyp = GET_DTYPE (uptr->flags);                  /* get drive type */
 
@@ -2753,7 +2760,7 @@ return SCPE_OK;
 
 /* Show write lock status */
 
-t_stat rq_show_wlk (FILE *st, UNIT *uptr, int32 val, void *desc)
+t_stat rq_show_wlk (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 {
 uint32 dtyp = GET_DTYPE (uptr->flags);                  /* get drive type */
 
@@ -2767,7 +2774,7 @@ return SCPE_OK;
 
 /* Set unit type (and capacity if user defined) */
 
-t_stat rq_set_type (UNIT *uptr, int32 val, char *cptr, void *desc)
+t_stat rq_set_type (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 {
 uint32 cap;
 uint32 max = sim_toffset_64? RA8U_EMAXC: RA8U_MAXC;
@@ -2792,7 +2799,7 @@ return SCPE_OK;
 
 /* Show unit type */
 
-t_stat rq_show_type (FILE *st, UNIT *uptr, int32 val, void *desc)
+t_stat rq_show_type (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 {
 fprintf (st, "%s", drv_tab[GET_DTYPE (uptr->flags)].name);
 return SCPE_OK;
@@ -2800,7 +2807,7 @@ return SCPE_OK;
 
 /* Set controller type */
 
-t_stat rq_set_ctype (UNIT *uptr, int32 val, char *cptr, void *desc)
+t_stat rq_set_ctype (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 {
 MSC *cp = rq_ctxmap[uptr->cnum];
 
@@ -2812,7 +2819,7 @@ return SCPE_OK;
 
 /* Show controller type */
 
-t_stat rq_show_ctype (FILE *st, UNIT *uptr, int32 val, void *desc)
+t_stat rq_show_ctype (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 {
 MSC *cp = rq_ctxmap[uptr->cnum];
 fprintf (st, "%s", ctlr_tab[cp->ctype].name);
@@ -2821,7 +2828,7 @@ return SCPE_OK;
 
 /* Device attach */
 
-t_stat rq_attach (UNIT *uptr, char *cptr)
+t_stat rq_attach (UNIT *uptr, CONST char *cptr)
 {
 MSC *cp = rq_ctxmap[uptr->cnum];
 t_stat r;
@@ -2996,7 +3003,6 @@ static const uint16 boot_rom[] = {
 t_stat rq_boot (int32 unitno, DEVICE *dptr)
 {
 size_t i;
-extern uint16 *M;
 DIB *dibp = (DIB *) dptr->ctxt;
 
 for (i = 0; i < BOOT_LEN; i++)
@@ -3066,7 +3072,7 @@ for (i = 0; i < RQ_SH_MAX; i = i + RQ_SH_PPL) {
 return;
 }
 
-t_stat rq_show_unitq (FILE *st, UNIT *uptr, int32 val, void *desc)
+t_stat rq_show_unitq (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 {
 MSC *cp = rq_ctxmap[uptr->cnum];
 DEVICE *dptr = rq_devmap[uptr->cnum];
@@ -3097,7 +3103,7 @@ else fprintf (st, "Unit %d queues are empty\n", u);
 return SCPE_OK;
 }
 
-t_stat rq_show_ctrl (FILE *st, UNIT *uptr, int32 val, void *desc)
+t_stat rq_show_ctrl (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 {
 MSC *cp = rq_ctxmap[uptr->cnum];
 DEVICE *dptr = rq_devmap[uptr->cnum];

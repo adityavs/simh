@@ -1,6 +1,6 @@
 /* sim_defs.h: simulator definitions
 
-   Copyright (c) 1993-2008, Robert M Supnik
+   Copyright (c) 1993-2016, Robert M Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -23,6 +23,9 @@
    used in advertising or otherwise to promote the sale, use or other dealings
    in this Software without prior written authorization from Robert M Supnik.
 
+   25-Sep-16    RMS     Removed KBD_WAIT and friends
+   08-Mar-16    RMS     Added shutdown invisible switch
+   24-Dec-14    JDB     Added T_ADDR_FMT
    05-Jan-11    MP      Added Asynch I/O support
    18-Jan-11    MP      Added log file reference count support
    21-Jul-08    RMS     Removed inlining support
@@ -105,16 +108,27 @@
 #ifndef SIM_DEFS_H_
 #define SIM_DEFS_H_    0
 
+#include "sim_rev.h"
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
+#if defined(_MSC_VER) && (_MSC_VER < 1900)
+#define snprintf _snprintf      /* poor man's snprintf which will work most of the time but has different return value */
+#endif
+#if defined(__VAX)
+extern int sim_vax_snprintf(char *buf, size_t buf_size, const char *fmt, ...);
+#define snprintf sim_vax_snprintf
+#endif
 #include <stdarg.h>
 #include <string.h>
 #include <errno.h>
 #include <limits.h>
+#include <ctype.h>
 
 #ifdef _WIN32
 #include <winsock2.h>
+#include <windows.h>
+#include <winerror.h>
 #undef PACKED                       /* avoid macro name collision */
 #undef ERROR                        /* avoid macro name collision */
 #undef MEM_MAPPED                   /* avoid macro name collision */
@@ -130,6 +144,10 @@
 #elif defined(HAVE_REGEX_H)
 #include <regex.h>
 #define USE_REGEX 1
+#endif
+
+#ifdef  __cplusplus
+extern "C" {
 #endif
 
 /* avoid macro names collisions */
@@ -155,18 +173,42 @@
 #define FALSE           0
 #endif
 
+/* SCP API shim.
+
+   The SCP API for version 4.0 introduces a number of "pointer-to-const"
+   parameter qualifiers that were not present in the 3.x versions.  To maintain
+   compatibility with the earlier versions, the new qualifiers are expressed as
+   "CONST" rather than "const".  This allows macro removal of the qualifiers
+   when compiling for SIMH 3.x.
+*/
+#ifndef CONST
+#define CONST const
+#endif
+
 /* Length specific integer declarations */
 
+/* Handle the special/unusual cases first with everything else leveraging stdints.h */
 #if defined (VMS)
 #include <ints.h>
-#else
-typedef signed char     int8;
-typedef signed short    int16;
-typedef signed int      int32;
-typedef unsigned char   uint8;
-typedef unsigned short  uint16;
-typedef unsigned int    uint32;
-#endif
+#elif defined(_MSC_VER) && (_MSC_VER < 1600)
+typedef __int8           int8;
+typedef __int16          int16;
+typedef __int32          int32;
+typedef unsigned __int8  uint8;
+typedef unsigned __int16 uint16;
+typedef unsigned __int32 uint32;
+#else                                                   
+/* All modern/standard compiler environments */
+/* any other environment needa a special case above */
+#include <stdint.h>
+typedef int8_t          int8;
+typedef int16_t         int16;
+typedef int32_t         int32;
+typedef uint8_t         uint8;
+typedef uint16_t        uint16;
+typedef uint32_t        uint32;
+#endif                                                  /* end standard integers */
+
 typedef int             t_stat;                         /* status */
 typedef int             t_bool;                         /* boolean */
 
@@ -195,9 +237,11 @@ typedef unsigned long           t_uint64;
 #if defined (USE_INT64)                                 /* 64b data */
 typedef t_int64         t_svalue;                       /* signed value */
 typedef t_uint64        t_value;                        /* value */
+#define T_VALUE_MAX     0xffffffffffffffffuLL
 #else                                                   /* 32b data */
 typedef int32           t_svalue;
 typedef uint32          t_value;
+#define T_VALUE_MAX     0xffffffffUL
 #endif                                                  /* end 64b data */
 
 #if defined (USE_INT64) && defined (USE_ADDR64)         /* 64b address */
@@ -224,8 +268,15 @@ typedef uint32          t_addr;
 
 #if defined (_WIN32) /* Actually, a GCC issue */
 #define LL_FMT "I64"
+#define LL_TYPE long long
+#else
+#if defined (__VAX) /* No 64 bit ints on VAX */
+#define LL_FMT "l"
+#define LL_TYPE long
 #else
 #define LL_FMT "ll"
+#define LL_TYPE long long
+#endif
 #endif
 
 #if defined (VMS) && (defined (__ia64) || defined (__ALPHA))
@@ -248,10 +299,27 @@ typedef uint32          t_addr;
 
 #if defined(_MSC_VER)
 #define SIM_INLINE _inline
+#define SIM_NOINLINE _declspec (noinline)
 #elif defined(__GNUC__)
 #define SIM_INLINE inline
+#define SIM_NOINLINE  __attribute__ ((noinline))
 #else
 #define SIM_INLINE 
+#define SIM_NOINLINE
+#endif
+
+/* Storage class modifier for weak link definition for sim_vm_init() */
+
+#if defined(__cplusplus)
+#if defined(__GNUC__)
+#define WEAK __attribute__((weak))
+#elif defined(_MSC_VER)
+#define WEAK __declspec(selectany) 
+#else
+#define WEAK extern 
+#endif
+#else
+#define WEAK 
 #endif
 
 /* System independent definitions */
@@ -268,8 +336,8 @@ typedef uint32          t_addr;
 
 /* Breakpoint spaces definitions */
 
-#define SIM_BKPT_N_SPC  16                              /* max number spaces */
-#define SIM_BKPT_V_SPC  28                              /* location in arg */
+#define SIM_BKPT_N_SPC  (1 << (32 - SIM_BKPT_V_SPC))    /* max number spaces */
+#define SIM_BKPT_V_SPC  (BRK_TYP_MAX + 1)               /* location in arg */
 
 /* Extended switch definitions (bits >= 26) */
 
@@ -277,6 +345,7 @@ typedef uint32          t_addr;
 #define SIM_SW_REST     (1u << 27)                      /* attach/restore */
 #define SIM_SW_REG      (1u << 28)                      /* register value */
 #define SIM_SW_STOP     (1u << 29)                      /* stop message */
+#define SIM_SW_SHUT     (1u << 30)                      /* shutdown */
 
 /* Simulator status codes
 
@@ -333,12 +402,13 @@ typedef uint32          t_addr;
 #define SCPE_INVREM     (SCPE_BASE + 43)                /* invalid remote console command */
 #define SCPE_NOTATT     (SCPE_BASE + 44)                /* not attached */
 #define SCPE_EXPECT     (SCPE_BASE + 45)                /* expect matched */
-#define SCPE_REMOTE     (SCPE_BASE + 46)                /* remote console command */
+#define SCPE_AMBREG     (SCPE_BASE + 46)                /* ambiguous register */
+#define SCPE_REMOTE     (SCPE_BASE + 47)                /* remote console command */
 
 #define SCPE_MAX_ERR    (SCPE_BASE + 47)                /* Maximum SCPE Error Value */
-#define SCPE_KFLAG      0x1000                          /* tti data flag */
-#define SCPE_BREAK      0x2000                          /* tti break flag */
-#define SCPE_NOMESSAGE  0x10000000                      /* message display supression flag */
+#define SCPE_KFLAG      0x10000000                      /* tti data flag */
+#define SCPE_BREAK      0x20000000                      /* tti break flag */
+#define SCPE_NOMESSAGE  0x40000000                      /* message display supression flag */
 #define SCPE_BARE_STATUS(stat) ((stat) & ~(SCPE_NOMESSAGE|SCPE_KFLAG|SCPE_BREAK))
 
 /* Print value format codes */
@@ -351,12 +421,9 @@ typedef uint32          t_addr;
 /* Default timing parameters */
 
 #define KBD_POLL_WAIT   5000                            /* keyboard poll */
-#define KBD_MAX_WAIT    500000
 #define SERIAL_IN_WAIT  100                             /* serial in time */
 #define SERIAL_OUT_WAIT 100                             /* serial output */
 #define NOQUEUE_WAIT    1000000                         /* min check time */
-#define KBD_LIM_WAIT(x) (((x) > KBD_MAX_WAIT)? KBD_MAX_WAIT: (x))
-#define KBD_WAIT(w,s)   ((w)? w: KBD_LIM_WAIT (s))
 
 /* Convert switch letter to bit mask */
 
@@ -364,7 +431,7 @@ typedef uint32          t_addr;
 
 /* String match - at least one character required */
 
-#define MATCH_CMD(ptr,cmd) ((NULL == (ptr)) || (!*(ptr)) || strncmp ((ptr), (cmd), strlen (ptr)))
+#define MATCH_CMD(ptr,cmd) ((NULL == (ptr)) || (!*(ptr)) || strncasecmp ((ptr), (cmd), strlen (ptr)))
 
 /* End of Linked List/Queue value                           */
 /* Chosen for 2 reasons:                                    */
@@ -374,45 +441,67 @@ typedef uint32          t_addr;
 /*     2 - to not be a valid/possible pointer (alignment)   */
 #define QUEUE_LIST_END ((UNIT *)1)
 
+/* Typedefs for principal structures */
+
+typedef struct DEVICE DEVICE;
+typedef struct UNIT UNIT;
+typedef struct REG REG;
+typedef struct CTAB CTAB;
+typedef struct C1TAB C1TAB;
+typedef struct SHTAB SHTAB;
+typedef struct MTAB MTAB;
+typedef struct SCHTAB SCHTAB;
+typedef struct BRKTAB BRKTAB;
+typedef struct BRKTYPTAB BRKTYPTAB;
+typedef struct EXPTAB EXPTAB;
+typedef struct EXPECT EXPECT;
+typedef struct SEND SEND;
+typedef struct DEBTAB DEBTAB;
+typedef struct FILEREF FILEREF;
+typedef struct MEMFILE MEMFILE;
+typedef struct BITFIELD BITFIELD;
+
+typedef t_stat (*ACTIVATE_API)(UNIT *unit, int32 interval);
+
 /* Device data structure */
 
-struct sim_device {
+struct DEVICE {
     const char          *name;                          /* name */
-    struct sim_unit     *units;                         /* units */
-    struct sim_reg      *registers;                     /* registers */
-    struct sim_mtab     *modifiers;                     /* modifiers */
+    UNIT                *units;                         /* units */
+    REG                 *registers;                     /* registers */
+    MTAB                *modifiers;                     /* modifiers */
     uint32              numunits;                       /* #units */
     uint32              aradix;                         /* address radix */
     uint32              awidth;                         /* address width */
     uint32              aincr;                          /* addr increment */
     uint32              dradix;                         /* data radix */
     uint32              dwidth;                         /* data width */
-    t_stat              (*examine)(t_value *v, t_addr a, struct sim_unit *up,
+    t_stat              (*examine)(t_value *v, t_addr a, UNIT *up,
                             int32 sw);                  /* examine routine */
-    t_stat              (*deposit)(t_value v, t_addr a, struct sim_unit *up,
+    t_stat              (*deposit)(t_value v, t_addr a, UNIT *up,
                             int32 sw);                  /* deposit routine */
-    t_stat              (*reset)(struct sim_device *dp);/* reset routine */
-    t_stat              (*boot)(int32 u, struct sim_device *dp);
+    t_stat              (*reset)(DEVICE *dp);           /* reset routine */
+    t_stat              (*boot)(int32 u, DEVICE *dp);
                                                         /* boot routine */
-    t_stat              (*attach)(struct sim_unit *up, char *cp);
+    t_stat              (*attach)(UNIT *up, CONST char *cp);
                                                         /* attach routine */
-    t_stat              (*detach)(struct sim_unit *up); /* detach routine */
+    t_stat              (*detach)(UNIT *up);            /* detach routine */
     void                *ctxt;                          /* context */
     uint32              flags;                          /* flags */
     uint32              dctrl;                          /* debug control */
-    struct sim_debtab   *debflags;                      /* debug flags */
-    t_stat              (*msize)(struct sim_unit *up, int32 v, char *cp, void *dp);
+    DEBTAB              *debflags;                      /* debug flags */
+    t_stat              (*msize)(UNIT *up, int32 v, CONST char *cp, void *dp);
                                                         /* mem size routine */
     char                *lname;                         /* logical name */
-    t_stat              (*help)(FILE *st, struct sim_device *dptr,
-                            struct sim_unit *uptr, int32 flag, const char *cptr); 
+    t_stat              (*help)(FILE *st, DEVICE *dptr,
+                            UNIT *uptr, int32 flag, const char *cptr); 
                                                         /* help */
-    t_stat              (*attach_help)(FILE *st, struct sim_device *dptr,
-                            struct sim_unit *uptr, int32 flag, const char *cptr);
+    t_stat              (*attach_help)(FILE *st, DEVICE *dptr,
+                            UNIT *uptr, int32 flag, const char *cptr);
                                                         /* attach help */
     void *help_ctx;                                     /* Context available to help routines */
-    const char          *(*description)(struct sim_device *dptr);
-                                                        /* Device Description */
+    const char          *(*description)(DEVICE *dptr);  /* Device Description */
+    BRKTYPTAB           *brk_types;                     /* Breakpoint types */
     };
 
 /* Device flags */
@@ -463,9 +552,9 @@ struct sim_device {
    are for a typical sequential device.
 */
 
-struct sim_unit {
-    struct sim_unit     *next;                          /* next active */
-    t_stat              (*action)(struct sim_unit *up); /* action routine */
+struct UNIT {
+    UNIT                *next;                          /* next active */
+    t_stat              (*action)(UNIT *up);            /* action routine */
     char                *filename;                      /* open file name */
     FILE                *fileref;                       /* file reference */
     void                *filebuf;                       /* memory buffer */
@@ -475,7 +564,7 @@ struct sim_unit {
     uint32              dynflags;                       /* dynamic flags */
     t_addr              capac;                          /* capacity */
     t_addr              pos;                            /* file position */
-    void                (*io_flush)(struct sim_unit *up);/* io flush routine */
+    void                (*io_flush)(UNIT *up);          /* io flush routine */
     uint32              iostarttime;                    /* I/O start time */
     int32               buf;                            /* buffer */
     int32               wait;                           /* wait */
@@ -485,13 +574,18 @@ struct sim_unit {
     int32               u6;                             /* device specific */
     void                *up7;                           /* device specific */
     void                *up8;                           /* device specific */
+    uint16              us9;                            /* device specific */
+    uint16              us10;                           /* device specific */
+    void                *tmxr;                          /* TMXR linkage */
+    t_bool              (*cancel)(UNIT *);
+    double              usecs_remaining;                /* time balance for long delays */
+    char                *uname;                         /* Unit name */
 #ifdef SIM_ASYNCH_IO
-    void                (*a_check_completion)(struct sim_unit *);
-    t_bool              (*a_is_active)(struct sim_unit *);
-    void                (*a_cancel)(struct sim_unit *);
-    struct sim_unit     *a_next;                        /* next asynch active */
+    void                (*a_check_completion)(UNIT *);
+    t_bool              (*a_is_active)(UNIT *);
+    UNIT                *a_next;                        /* next asynch active */
     int32               a_event_time;
-    t_stat              (*a_activate_call)(struct sim_unit *, int32);
+    ACTIVATE_API        a_activate_call;
     /* Asynchronous Polling control */
     /* These fields should only be referenced when holding the sim_tmxr_poll_lock */
     t_bool              a_polling_now;                  /* polling active flag */
@@ -499,9 +593,8 @@ struct sim_unit {
                                                         /* waiting for this unit */
     /* Asynchronous Timer control */
     double              a_due_time;                     /* due time for timer event */
-    double              a_skew;                         /* accumulated skew being corrected */
-    double              a_last_fired_time;              /* time last event fired */
-    int32               a_usec_delay;                   /* time delay for timer event */
+    double              a_due_gtime;                    /* due time (in instructions) for timer event */
+    double              a_usec_delay;                   /* time delay for timer event */
 #endif
     };
 
@@ -539,10 +632,12 @@ struct sim_unit {
 #define UNIT_ATTMULT    0000001         /* Allow multiple attach commands */
 #define UNIT_TM_POLL    0000002         /* TMXR Polling unit */
 #define UNIT_NO_FIO     0000004         /* fileref is NOT a FILE * */
-#define UNIT_V_DF_TAPE  3               /* Bit offset for Tape Density reservation */
+#define UNIT_DISK_CHK   0000010         /* disk data debug checking (sim_disk) */
+#define UNIT_TMR_UNIT   0000020         /* Unit registered as a calibrated timer */
+#define UNIT_V_DF_TAPE  5               /* Bit offset for Tape Density reservation */
 #define UNIT_S_DF_TAPE  3               /* Bits Reserved for Tape Density */
 
-struct sim_bitfield {
+struct BITFIELD {
     const char      *name;                              /* field name */
     uint32          offset;                             /* starting bit */
     uint32          width;                              /* width */
@@ -552,35 +647,44 @@ struct sim_bitfield {
 
 /* Register data structure */
 
-struct sim_reg {
-    const char          *name;                          /* name */
+struct REG {
+    CONST char          *name;                          /* name */
     void                *loc;                           /* location */
     uint32              radix;                          /* radix */
     uint32              width;                          /* width */
     uint32              offset;                         /* starting bit */
     uint32              depth;                          /* save depth */
     const char          *desc;                          /* description */
-    struct sim_bitfield *fields;                        /* bit fields */
-    uint32              flags;                          /* flags */
+    BITFIELD            *fields;                        /* bit fields */
     uint32              qptr;                           /* circ q ptr */
+    size_t              str_size;                       /* structure size */
+    /* NOTE: Flags MUST always be last since it is initialized outside of macro definitions */
+    uint32              flags;                          /* flags */
     };
+
+/* Register flags */
 
 #define REG_FMT         00003                           /* see PV_x */
 #define REG_RO          00004                           /* read only */
 #define REG_HIDDEN      00010                           /* hidden */
 #define REG_NZ          00020                           /* must be non-zero */
 #define REG_UNIT        00040                           /* in unit struct */
-#define REG_CIRC        00100                           /* circular array */
-#define REG_VMIO        00200                           /* use VM data print/parse */
-#define REG_VMAD        00400                           /* use VM addr print/parse */
-#define REG_FIT         01000                           /* fit access to size */
+#define REG_STRUCT      00100                           /* in structure array */
+#define REG_CIRC        00200                           /* circular array */
+#define REG_VMIO        00400                           /* use VM data print/parse */
+#define REG_VMAD        01000                           /* use VM addr print/parse */
+#define REG_FIT         02000                           /* fit access to size */
 #define REG_HRO         (REG_RO | REG_HIDDEN)           /* hidden, read only */
+
+#define REG_V_UF        16                              /* device specific */
+#define REG_UFMASK      (~((1u << REG_V_UF) - 1))       /* user flags mask */
+#define REG_VMFLAGS     (REG_VMIO | REG_UFMASK)         /* call VM routine if any of these are set */
 
 /* Command tables, base and alternate formats */
 
-struct sim_ctab {
+struct CTAB {
     const char          *name;                          /* name */
-    t_stat              (*action)(int32 flag, char *cptr);
+    t_stat              (*action)(int32 flag, CONST char *cptr);
                                                         /* action routine */
     int32               arg;                            /* argument */
     const char          *help;                          /* help string/structured locator */
@@ -589,32 +693,32 @@ struct sim_ctab {
                                                         /* message printing routine */
     };
 
-struct sim_c1tab {
+struct C1TAB {
     const char          *name;                          /* name */
-    t_stat              (*action)(struct sim_device *dptr, struct sim_unit *uptr,
-                            int32 flag, char *cptr);    /* action routine */
+    t_stat              (*action)(DEVICE *dptr, UNIT *uptr,
+                            int32 flag, CONST char *cptr);/* action routine */
     int32               arg;                            /* argument */
     const char          *help;                          /* help string */
     };
 
-struct sim_shtab {
+struct SHTAB {
     const char          *name;                          /* name */
-    t_stat              (*action)(FILE *st, struct sim_device *dptr,
-                            struct sim_unit *uptr, int32 flag, char *cptr);
+    t_stat              (*action)(FILE *st, DEVICE *dptr,
+                            UNIT *uptr, int32 flag, CONST char *cptr);
     int32               arg;                            /* argument */
     const char          *help;                          /* help string */
     };
 
 /* Modifier table - only extended entries have disp, reg, or flags */
 
-struct sim_mtab {
+struct MTAB {
     uint32              mask;                           /* mask */
     uint32              match;                          /* match */
     const char          *pstring;                       /* print string */
     const char          *mstring;                       /* match string */
-    t_stat              (*valid)(struct sim_unit *up, int32 v, char *cp, void *dp);
+    t_stat              (*valid)(UNIT *up, int32 v, CONST char *cp, void *dp);
                                                         /* validation routine */
-    t_stat              (*disp)(FILE *st, struct sim_unit *up, int32 v, void *dp);
+    t_stat              (*disp)(FILE *st, UNIT *up, int32 v, CONST void *dp);
                                                         /* display routine */
     void                *desc;                          /* value descriptor */
                                                         /* REG * if MTAB_VAL */
@@ -638,7 +742,7 @@ struct sim_mtab {
 
 /* Search table */
 
-struct sim_schtab {
+struct SCHTAB {
     int32               logic;                          /* logical operator */
     int32               boolop;                         /* boolean operator */
     uint32              count;                          /* value count in mask and comp arrays */
@@ -648,23 +752,37 @@ struct sim_schtab {
 
 /* Breakpoint table */
 
-struct sim_brktab {
+struct BRKTAB {
     t_addr              addr;                           /* address */
     uint32              typ;                            /* mask of types */
+#define BRK_TYP_USR_TYPES       ((1 << ('Z'-'A'+1)) - 1)/* all types A-Z */
 #define BRK_TYP_DYN_STEPOVER    (SWMASK ('Z'+1))
 #define BRK_TYP_DYN_USR         (SWMASK ('Z'+2))
 #define BRK_TYP_DYN_ALL         (BRK_TYP_DYN_USR|BRK_TYP_DYN_STEPOVER) /* Mask of All Dynamic types */
+#define BRK_TYP_TEMP            (SWMASK ('Z'+3))        /* Temporary (one-shot) */
+#define BRK_TYP_MAX             (('Z'-'A')+3)           /* Maximum breakpoint type */
     int32               cnt;                            /* proceed count */
     char                *act;                           /* action string */
+    double              time_fired[SIM_BKPT_N_SPC];     /* instruction count when match occurred */
+    BRKTAB *next;                                       /* list with same address value */
     };
+
+/* Breakpoint table */
+
+struct BRKTYPTAB {
+    uint32      btyp;                                   /* type mask */
+    const char *desc;                                   /* description */
+    };
+#define BRKTYPE(typ,descrip) {SWMASK(typ), descrip}
 
 /* Expect rule */
 
-struct sim_exptab {
+struct EXPTAB {
     uint8               *match;                         /* match string */
     uint32              size;                           /* match string size */
     char                *match_pattern;                 /* match pattern for format */
     int32               cnt;                            /* proceed count */
+    uint32              after;                          /* delay before halting */
     int32               switches;                       /* flags */
 #define EXP_TYP_PERSIST         (SWMASK ('P'))      /* rule persists after match, default is once a rule matches, it is removed */
 #define EXP_TYP_CLEARALL        (SWMASK ('C'))      /* clear all rules after matching this rule, default is to once a rule matches, it is removed */
@@ -679,23 +797,23 @@ struct sim_exptab {
 
 /* Expect Context */
 
-struct sim_expect {
-    struct sim_device   *dptr;                          /* Device (for Debug) */
+struct EXPECT {
+    DEVICE              *dptr;                          /* Device (for Debug) */
     uint32              dbit;                           /* Debugging Bit */
-    struct sim_exptab   *rules;                         /* match rules */
+    EXPTAB              *rules;                         /* match rules */
     int32               size;                           /* count of match rules */
-    uint32              after;                          /* delay before halting */
     uint8               *buf;                           /* buffer of output data which has produced */
     uint32              buf_ins;                        /* buffer insertion point for the next output data */
     uint32              buf_size;                       /* buffer size */
+    uint32              buf_data;                       /* count of data in buffer */
     };
 
 /* Send Context */
 
-struct sim_send {
+struct SEND {
     uint32              delay;                          /* instruction delay between sent data */
 #define SEND_DEFAULT_DELAY  1000                        /* default delay instruction count */
-    struct sim_device   *dptr;                          /* Device (for Debug) */
+    DEVICE              *dptr;                          /* Device (for Debug) */
     uint32              dbit;                           /* Debugging Bit */
     uint32              after;                          /* instruction delay before sending any data */
     double              next_time;                      /* execution time when next data can be sent */
@@ -707,7 +825,7 @@ struct sim_send {
 
 /* Debug table */
 
-struct sim_debtab {
+struct DEBTAB {
     const char          *name;                          /* control name */
     uint32              mask;                           /* control bit */
     const char          *desc;                          /* description */
@@ -724,82 +842,180 @@ struct sim_debtab {
 #define SIM_DBG_ACTIVATE    0x20000
 #define SIM_DBG_AIO_QUEUE   0x40000
 
-/* File Reference */
-struct sim_fileref {
+/* Open File Reference */
+struct FILEREF {
     char                name[CBUFSIZE];                 /* file name */
     FILE                *file;                          /* file handle */
     int32               refcount;                       /* reference count */
     };
 
-/* The following macros define structure contents */
+struct MEMFILE {
+    char                *buf;                           /* buffered data */
+    size_t              size;                        /* size */
+    size_t              pos;                         /* data used */
+    };
+/* 
+   The following macros exist to help populate structure contents
+
+   They are dependent on the declaration order of the fields 
+   of the structures they exist to populate.
+
+ */
 
 #define UDATA(act,fl,cap) NULL,act,NULL,NULL,NULL,0,0,(fl),0,(cap),0,NULL,0,0
 
-#if defined (__STDC__) || defined (_WIN32)
+/* Internal use ONLY (see below) Generic Register declaration for all fields */
+#define _REGDATANF(nm,loc,rdx,wd,off,dep,desc,flds,qptr,siz) \
+    nm, (loc), (rdx), (wd), (off), (dep), (desc), (flds), (qptr), (siz)
+
+#if defined (__STDC__) || defined (_WIN32) /* Variants which depend on how macro arguments are convered to strings */
+/* Generic Register declaration for all fields.  
+   If the register structure is extended, this macro will be retained and a 
+   new internal macro will be provided that populates the new register structure */
+#define REGDATA(nm,loc,rdx,wd,off,dep,desc,flds,fl,qptr,siz) \
+    _REGDATANF(#nm,&(loc),rdx,wd,off,dep,desc,flds,qptr,siz),(fl)
+#define REGDATAC(nm,loc,rdx,wd,off,dep,desc,flds,fl,qptr,siz) \
+    _REGDATANF(#nm,&(loc),rdx,wd,off,dep,desc,flds,qptr,siz),(fl)
 /* Right Justified Octal Register Data */
-#define ORDATA(nm,loc,wd) #nm, &(loc), 8, (wd), 0, 1, NULL, NULL
+#define ORDATA(nm,loc,wd) \
+    _REGDATANF(#nm,&(loc),8,wd,0,1,NULL,NULL,0,0)
+#define ORDATAD(nm,loc,wd,desc) \
+    _REGDATANF(#nm,&(loc),8,wd,0,1,desc,NULL,0,0)
+#define ORDATADF(nm,loc,wd,desc,flds) \
+    _REGDATANF(#nm,&(loc),8,wd,0,1,desc,flds,0,0)
 /* Right Justified Decimal Register Data */
-#define DRDATA(nm,loc,wd) #nm, &(loc), 10, (wd), 0, 1, NULL, NULL
+#define DRDATA(nm,loc,wd) \
+    _REGDATANF(#nm,&(loc),10,wd,0,1,NULL,NULL,0,0)
+#define DRDATAD(nm,loc,wd,desc) \
+    _REGDATANF(#nm,&(loc),10,wd,0,1,desc,NULL,0,0)
+#define DRDATADF(nm,loc,wd,desc,flds) \
+    _REGDATANF(#nm,&(loc),10,wd,0,1,desc,flds,0,0)
 /* Right Justified Hexadecimal Register Data */
-#define HRDATA(nm,loc,wd) #nm, &(loc), 16, (wd), 0, 1, NULL, NULL
+#define HRDATA(nm,loc,wd) \
+    _REGDATANF(#nm,&(loc),16,wd,0,1,NULL,NULL,0,0)
+#define HRDATAD(nm,loc,wd,desc) \
+    _REGDATANF(#nm,&(loc),16,wd,0,1,desc,NULL,0,0)
+#define HRDATADF(nm,loc,wd,desc,flds) \
+    _REGDATANF(#nm,&(loc),16,wd,0,1,desc,flds,0,0)
+/* Right Justified Binary Register Data */
+#define BINRDATA(nm,loc,wd) \
+    _REGDATANF(#nm,&(loc),2,wd,0,1,NULL,NULL,0,0)
+#define BINRDATAD(nm,loc,wd,desc) \
+    _REGDATANF(#nm,&(loc),2,wd,0,1,desc,NULL,0,0)
+#define BINRDATADF(nm,loc,wd,desc,flds) \
+    _REGDATANF(#nm,&(loc),2,wd,0,1,desc,flds,0,0)
 /* One-bit binary flag at an arbitrary offset in a 32-bit word Register */
-#define FLDATA(nm,loc,pos) #nm, &(loc), 2, 1, (pos), 1, NULL, NULL
+#define FLDATA(nm,loc,pos) \
+    _REGDATANF(#nm,&(loc),2,1,pos,1,NULL,NULL,0,0)
+#define FLDATAD(nm,loc,pos,desc) \
+    _REGDATANF(#nm,&(loc),2,1,pos,1,desc,NULL,0,0)
+#define FLDATADF(nm,loc,pos,desc,flds) \
+    _REGDATANF(#nm,&(loc),2,1,pos,1,desc,flds,0,0)
 /* Arbitrary location and Radix Register */
-#define GRDATA(nm,loc,rdx,wd,pos) #nm, &(loc), (rdx), (wd), (pos), 1, NULL, NULL
+#define GRDATA(nm,loc,rdx,wd,pos) \
+    _REGDATANF(#nm,&(loc),rdx,wd,pos,1,NULL,NULL,0,0)
+#define GRDATAD(nm,loc,rdx,wd,pos,desc) \
+    _REGDATANF(#nm,&(loc),rdx,wd,pos,1,desc,NULL,0,0)
+#define GRDATADF(nm,loc,rdx,wd,pos,desc,flds) \
+    _REGDATANF(#nm,&(loc),rdx,wd,pos,1,desc,flds,0,0)
 /* Arrayed register whose data is kept in a standard C array Register */
-#define BRDATA(nm,loc,rdx,wd,dep) #nm, (loc), (rdx), (wd), 0, (dep), NULL, NULL
+#define BRDATA(nm,loc,rdx,wd,dep) \
+    _REGDATANF(#nm,loc,rdx,wd,0,dep,NULL,NULL,0,0)
+#define BRDATAD(nm,loc,rdx,wd,dep,desc) \
+    _REGDATANF(#nm,loc,rdx,wd,0,dep,desc,NULL,0,0)
+#define BRDATADF(nm,loc,rdx,wd,dep,desc,flds) \
+    _REGDATANF(#nm,loc,rdx,wd,0,dep,desc,flds,0,0)
 /* Arrayed register whose data is part of the UNIT structure */
 #define URDATA(nm,loc,rdx,wd,off,dep,fl) \
-    #nm, &(loc), (rdx), (wd), (off), (dep), NULL, NULL, ((fl) | REG_UNIT)
-/* Same as above, but with additional description initializer */
-#define ORDATAD(nm,loc,wd,desc) #nm, &(loc), 8, (wd), 0, 1, (desc), NULL
-#define DRDATAD(nm,loc,wd,desc) #nm, &(loc), 10, (wd), 0, 1, (desc), NULL
-#define HRDATAD(nm,loc,wd,desc) #nm, &(loc), 16, (wd), 0, 1, (desc), NULL
-#define FLDATAD(nm,loc,pos,desc) #nm, &(loc), 2, 1, (pos), 1, (desc), NULL
-#define GRDATAD(nm,loc,rdx,wd,pos,desc) #nm, &(loc), (rdx), (wd), (pos), 1, (desc), NULL
-#define BRDATAD(nm,loc,rdx,wd,dep,desc) #nm, (loc), (rdx), (wd), 0, (dep), (desc), NULL
+    _REGDATANF(#nm,&(loc),rdx,wd,off,dep,NULL,NULL,0,0),((fl) | REG_UNIT)
 #define URDATAD(nm,loc,rdx,wd,off,dep,fl,desc) \
-    #nm, &(loc), (rdx), (wd), (off), (dep), (desc), NULL, ((fl) | REG_UNIT)
-/* Same as above, but with additional description initializer, and bitfields */
-#define ORDATADF(nm,loc,wd,desc,flds) #nm, &(loc), 8, (wd), 0, 1, (desc), (flds)
-#define DRDATADF(nm,loc,wd,desc,flds) #nm, &(loc), 10, (wd), 0, 1, (desc), (flds)
-#define HRDATADF(nm,loc,wd,desc,flds) #nm, &(loc), 16, (wd), 0, 1, (desc), (flds)
-#define FLDATADF(nm,loc,pos,desc,flds) #nm, &(loc), 2, 1, (pos), 1, (desc), (flds)
-#define GRDATADF(nm,loc,rdx,wd,pos,desc,flds) #nm, &(loc), (rdx), (wd), (pos), 1, (desc), (flds)
-#define BRDATADF(nm,loc,rdx,wd,dep,desc,flds) #nm, (loc), (rdx), (wd), 0, (dep), (desc), (flds)
+    _REGDATANF(#nm,&(loc),rdx,wd,off,dep,desc,NULL,0,0),((fl) | REG_UNIT)
 #define URDATADF(nm,loc,rdx,wd,off,dep,fl,desc,flds) \
-    #nm, &(loc), (rdx), (wd), (off), (dep), (desc), (flds), ((fl) | REG_UNIT)
+    _REGDATANF(#nm,&(loc),rdx,wd,off,dep,desc,flds,0,0),((fl) | REG_UNIT)
+/* Arrayed register whose data is part of an arbitrary structure */
+#define STRDATA(nm,loc,rdx,wd,off,dep,siz,fl) \
+    _REGDATANF(#nm,&(loc),rdx,wd,off,dep,NULL,NULL,0,siz),((fl) | REG_STRUCT)
+#define STRDATAD(nm,loc,rdx,wd,off,dep,siz,fl,desc) \
+    _REGDATANF(#nm,&(loc),rdx,wd,off,dep,desc,NULL,0,siz),((fl) | REG_STRUCT)
+#define STRDATADF(nm,loc,rdx,wd,off,dep,siz,fl,desc,flds) \
+    _REGDATANF(#nm,&(loc),rdx,wd,off,dep,desc,flds,0,siz),((fl) | REG_STRUCT)
 #define BIT(nm)              {#nm, 0xffffffff, 1}             /* Single Bit definition */
 #define BITNC                {"",  0xffffffff, 1}             /* Don't care Bit definition */
 #define BITF(nm,sz)          {#nm, 0xffffffff, sz}            /* Bit Field definition */
 #define BITNCF(sz)           {"",  0xffffffff, sz}            /* Don't care Bit Field definition */
 #define BITFFMT(nm,sz,fmt)   {#nm, 0xffffffff, sz, NULL, #fmt}/* Bit Field definition with Output format */
 #define BITFNAM(nm,sz,names) {#nm, 0xffffffff, sz, names}     /* Bit Field definition with value->name map */
-#else
-#define ORDATA(nm,loc,wd) "nm", &(loc), 8, (wd), 0, 1, NULL, NULL
-#define DRDATA(nm,loc,wd) "nm", &(loc), 10, (wd), 0, 1, NULL, NULL
-#define HRDATA(nm,loc,wd) "nm", &(loc), 16, (wd), 0, 1, NULL, NULL
-#define FLDATA(nm,loc,pos) "nm", &(loc), 2, 1, (pos), 1, NULL, NULL
-#define GRDATA(nm,loc,rdx,wd,pos) "nm", &(loc), (rdx), (wd), (pos), 1, NULL, NULL
-#define BRDATA(nm,loc,rdx,wd,dep) "nm", (loc), (rdx), (wd), 0, (dep), NULL, NULL
+#else /* For non-STD-C compiler which can't stringify macro arguments with # */
+/* Generic Register declaration for all fields.  
+   If the register structure is extended, this macro will be retained and a 
+   new macro will be provided that populates the new register structure */
+#define REGDATA(nm,loc,rdx,wd,off,dep,desc,flds,fl,qptr,siz) \
+    _REGDATANF("nm",&(loc),rdx,wd,off,dep,desc,flds,qptr,siz),(fl)
+#define REGDATAC(nm,loc,rdx,wd,off,dep,desc,flds,fl,qptr,siz) \
+    _REGDATANF("nm",&(loc),rdx,wd,off,dep,desc,flds,qptr,siz),(fl)
+/* Right Justified Octal Register Data */
+#define ORDATA(nm,loc,wd) \
+    _REGDATANF("nm",&(loc),8,wd,0,1,NULL,NULL,0,0)
+#define ORDATAD(nm,loc,wd,desc) \
+    _REGDATANF("nm",&(loc),8,wd,0,1,desc,NULL,0,0)
+#define ORDATADF(nm,loc,wd,desc,flds) \
+    _REGDATANF("nm",&(loc),8,wd,0,1,desc,flds,0,0)
+/* Right Justified Decimal Register Data */
+#define DRDATA(nm,loc,wd) \
+    _REGDATANF("nm",&(loc),10,wd,0,1,NULL,NULL,0,0)
+#define DRDATAD(nm,loc,wd,desc) \
+    _REGDATANF("nm",&(loc),10,wd,0,1,desc,NULL,0,0)
+#define DRDATADF(nm,loc,wd,desc,flds) \
+    _REGDATANF("nm",&(loc),10,wd,0,1,desc,flds,0,0)
+/* Right Justified Hexadecimal Register Data */
+#define HRDATA(nm,loc,wd) \
+    _REGDATANF("nm",&(loc),16,wd,0,1,NULL,NULL,0,0)
+#define HRDATAD(nm,loc,wd,desc) \
+    _REGDATANF("nm",&(loc),16,wd,0,1,desc,NULL,0,0)
+#define HRDATADF(nm,loc,wd,desc,flds) \
+    _REGDATANF("nm",&(loc),16,wd,0,1,desc,flds,0,0)
+/* Right Justified Binary Register Data */
+#define BINRDATA(nm,loc,wd) \
+    _REGDATANF("nm",&(loc),2,wd,0,1,NULL,NULL,0,0)
+#define BINRDATAD(nm,loc,wd,desc) \
+    _REGDATANF("nm",&(loc),2,wd,0,1,desc,NULL,0,0)
+#define BINRDATADF(nm,loc,wd,desc,flds) \
+    _REGDATANF("nm",&(loc),2,wd,0,1,desc,flds,0,0)
+/* One-bit binary flag at an arbitrary offset in a 32-bit word Register */
+#define FLDATA(nm,loc,pos) \
+    _REGDATANF("nm",&(loc),2,1,pos,1,NULL,NULL,0,0)
+#define FLDATAD(nm,loc,pos,desc) \
+    _REGDATANF("nm",&(loc),2,1,pos,1,desc,NULL,0,0)
+#define FLDATADF(nm,loc,pos,desc,flds) \
+    _REGDATANF("nm",&(loc),2,1,pos,1,desc,flds,0,0)
+/* Arbitrary location and Radix Register */
+#define GRDATA(nm,loc,rdx,wd,pos) \
+    _REGDATANF("nm",&(loc),rdx,wd,pos,1,NULL,NULL,0,0)
+#define GRDATAD(nm,loc,rdx,wd,pos,desc) \
+    _REGDATANF("nm",&(loc),rdx,wd,pos,1,desc,NULL,0,0)
+#define GRDATADF(nm,loc,rdx,wd,pos,desc,flds) \
+    _REGDATANF("nm",&(loc),rdx,wd,pos,1,desc,flds,0,0)
+/* Arrayed register whose data is kept in a standard C array Register */
+#define BRDATA(nm,loc,rdx,wd,dep) \
+    _REGDATANF("nm",loc,rdx,wd,0,dep,NULL,NULL,0,0)
+#define BRDATAD(nm,loc,rdx,wd,dep,desc) \
+    _REGDATANF("nm",loc,rdx,wd,0,dep,desc,NULL,0,0)
+#define BRDATADF(nm,loc,rdx,wd,dep,desc,flds) \
+    _REGDATANF("nm",loc,rdx,wd,0,dep,desc,flds,0,0)
+/* Arrayed register whose data is part of the UNIT structure */
 #define URDATA(nm,loc,rdx,wd,off,dep,fl) \
-    "nm", &(loc), (rdx), (wd), (off), (dep), NULL, NULL, ((fl) | REG_UNIT)
-#define ORDATAD(nm,loc,wd,desc) "nm", &(loc), 8, (wd), 0, 1, (desc), NULL
-#define DRDATAD(nm,loc,wd,desc) "nm", &(loc), 10, (wd), 0, 1, (desc), NULL
-#define HRDATAD(nm,loc,wd,desc) "nm", &(loc), 16, (wd), 0, 1, (desc), NULL
-#define FLDATAD(nm,loc,pos,desc) "nm", &(loc), 2, 1, (pos), 1, (desc), NULL
-#define GRDATAD(nm,loc,rdx,wd,pos,desc) "nm", &(loc), (rdx), (wd), (pos), 1, (desc), NULL
-#define BRDATAD(nm,loc,rdx,wd,dep,desc) "nm", (loc), (rdx), (wd), 0, (dep), (desc), NULL
+    _REGDATANF("nm",&(loc),rdx,wd,off,dep,NULL,NULL,0,0),((fl) | REG_UNIT)
 #define URDATAD(nm,loc,rdx,wd,off,dep,fl,desc) \
-    "nm", &(loc), (rdx), (wd), (off), (dep), (desc), NULL, ((fl) | REG_UNIT)
-#define ORDATADF(nm,loc,wd,desc,flds) "nm", &(loc), 8, (wd), 0, 1, (desc), (flds)
-#define DRDATADF(nm,loc,wd,desc,flds) "nm", &(loc), 10, (wd), 0, 1, (desc), (flds)
-#define HRDATADF(nm,loc,wd,desc,flds) "nm", &(loc), 16, (wd), 0, 1, (desc), (flds)
-#define FLDATADF(nm,loc,pos,desc,flds) "nm", &(loc), 2, 1, (pos), 1, (desc), (flds)
-#define GRDATADF(nm,loc,rdx,wd,pos,desc,flds) "nm", &(loc), (rdx), (wd), (pos), 1, (desc), (flds)
-#define BRDATADF(nm,loc,rdx,wd,dep,desc,flds) "nm", (loc), (rdx), (wd), 0, (dep), (desc), (flds)
+    _REGDATANF("nm",&(loc),rdx,wd,off,dep,desc,NULL,0,0),((fl) | REG_UNIT)
 #define URDATADF(nm,loc,rdx,wd,off,dep,fl,desc,flds) \
-    "nm", &(loc), (rdx), (wd), (off), (dep), (desc), (flds), ((fl) | REG_UNIT)
+    _REGDATANF("nm",&(loc),rdx,wd,off,dep,desc,flds,0,0),((fl) | REG_UNIT)
+/* Arrayed register whose data is part of an arbitrary structure */
+#define STRDATA(nm,loc,rdx,wd,off,dep,siz,fl) \
+    _REGDATANF("nm",&(loc),rdx,wd,off,dep,NULL,NULL,0,siz),((fl) | REG_STRUCT)
+#define STRDATAD(nm,loc,rdx,wd,off,dep,siz,fl,desc) \
+    _REGDATANF("nm",&(loc),rdx,wd,off,dep,desc,NULL,0,siz),((fl) | REG_STRUCT)
+#define STRDATADF(nm,loc,rdx,wd,off,dep,siz,fl,desc,flds) \
+    _REGDATANF("nm",&(loc),rdx,wd,off,dep,desc,flds,0,siz),((fl) | REG_STRUCT)
 #define BIT(nm)              {"nm", 0xffffffff, 1}              /* Single Bit definition */
 #define BITNC                {"",   0xffffffff, 1}              /* Don't care Bit definition */
 #define BITF(nm,sz)          {"nm", 0xffffffff, sz}             /* Bit Field definition */
@@ -809,23 +1025,6 @@ struct sim_fileref {
 #endif
 #define ENDBITS {NULL}  /* end of bitfield list */
 
-/* Typedefs for principal structures */
-
-typedef struct sim_device DEVICE;
-typedef struct sim_unit UNIT;
-typedef struct sim_reg REG;
-typedef struct sim_ctab CTAB;
-typedef struct sim_c1tab C1TAB;
-typedef struct sim_shtab SHTAB;
-typedef struct sim_mtab MTAB;
-typedef struct sim_schtab SCHTAB;
-typedef struct sim_brktab BRKTAB;
-typedef struct sim_exptab EXPTAB;
-typedef struct sim_expect EXPECT;
-typedef struct sim_send SEND;
-typedef struct sim_debtab DEBTAB;
-typedef struct sim_fileref FILEREF;
-typedef struct sim_bitfield BITFIELD;
 
 /* Function prototypes */
 
@@ -838,16 +1037,16 @@ typedef struct sim_bitfield BITFIELD;
 /* This replaces any references to "assert()" which should never be invoked */
 /* with an expression which causes side effects (i.e. must be executed for */
 /* the program to work correctly) */
-#define ASSURE(_Expression) if (!(_Expression)) {const char *_exp = #_Expression; const char *_file = __FILE__;                                 \
-                                                 fprintf(stderr, "%s failed at %s line %d\n", _exp, _file, __LINE__);               \
-                                                 if (sim_log) fprintf(sim_log, "%s failed at %s line %d\n", _exp, _file, __LINE__); \
-                                                 if (sim_deb) fprintf(sim_deb, "%s failed at %s line %d\n", _exp, _file, __LINE__); \
-                                                 abort();} else (void)0
+#define ASSURE(_Expression) while (!(_Expression)) {fprintf(stderr, "%s failed at %s line %d\n", #_Expression, __FILE__, __LINE__);  \
+                                                    sim_printf("%s failed at %s line %d\n", #_Expression, __FILE__, __LINE__);       \
+                                                    abort();}
 
 /* Asynch/Threaded I/O support */
 
 #if defined (SIM_ASYNCH_IO)
 #include <pthread.h>
+
+#define SIM_ASYNCH_CLOCKS 1
 
 extern pthread_mutex_t sim_asynch_lock;
 extern pthread_cond_t sim_asynch_wake;
@@ -859,8 +1058,6 @@ extern pthread_cond_t sim_tmxr_poll_cond;
 extern pthread_mutex_t sim_tmxr_poll_lock;
 extern pthread_t sim_asynch_main_threadid;
 extern UNIT * volatile sim_asynch_queue;
-extern UNIT * volatile sim_wallclock_queue;
-extern UNIT * volatile sim_wallclock_entry;
 extern volatile t_bool sim_idle_wait;
 extern int32 sim_asynch_check;
 extern int32 sim_asynch_latency;
@@ -876,197 +1073,43 @@ extern int32 sim_asynch_inst_latency;
 /* It is primarily used only used in debugging messages */
 #define AIO_TLS
 #endif
-#define AIO_QUEUE_CHECK(que, lock)                                  \
-    if (1) {                                                        \
-            UNIT *_cptr;                                            \
-            if (lock)                                               \
-                pthread_mutex_lock (lock);                          \
-            for (_cptr = que;                                       \
-                (_cptr != QUEUE_LIST_END);                          \
-                _cptr = _cptr->next)                                \
-                if (!_cptr->next) {                                 \
-                    if (sim_deb) {                                  \
-                        sim_debug (SIM_DBG_EVENT, sim_dflt_dev, "Queue Corruption detected\n");\
-                        fclose(sim_deb);                            \
-                        }                                           \
-                    abort();                                        \
-                    }                                               \
-            if (lock)                                               \
-                pthread_mutex_unlock (lock);                        \
-        } else (void)0
+#define AIO_QUEUE_CHECK(que, lock)                              \
+    do {                                                        \
+        UNIT *_cptr;                                            \
+        if (lock)                                               \
+            pthread_mutex_lock (lock);                          \
+        for (_cptr = que;                                       \
+            (_cptr != QUEUE_LIST_END);                          \
+            _cptr = _cptr->next)                                \
+            if (!_cptr->next) {                                 \
+                if (sim_deb) {                                  \
+                    sim_debug (SIM_DBG_EVENT, sim_dflt_dev, "Queue Corruption detected\n");\
+                    fclose(sim_deb);                            \
+                    }                                           \
+                sim_printf("Queue Corruption detected\n");      \
+                abort();                                        \
+                }                                               \
+        if (lock)                                               \
+            pthread_mutex_unlock (lock);                        \
+        } while (0)
 #define AIO_MAIN_THREAD (pthread_equal ( pthread_self(), sim_asynch_main_threadid ))
 #define AIO_LOCK                                                  \
     pthread_mutex_lock(&sim_asynch_lock)
 #define AIO_UNLOCK                                                \
     pthread_mutex_unlock(&sim_asynch_lock)
 #define AIO_IS_ACTIVE(uptr) (((uptr)->a_is_active ? (uptr)->a_is_active (uptr) : FALSE) || ((uptr)->a_next))
-#if !defined(SIM_ASYNCH_MUX) && !defined(SIM_ASYNCH_CLOCKS)
-#define AIO_CANCEL(uptr)                                          \
-    if ((uptr)->a_cancel)                                         \
-        (uptr)->a_cancel (uptr);                                  \
-    else                                                          \
-        (void)0
-#endif /* !defined(SIM_ASYNCH_MUX) && !defined(SIM_ASYNCH_CLOCKS) */
-#if !defined(SIM_ASYNCH_MUX) && defined(SIM_ASYNCH_CLOCKS)
-#define AIO_CANCEL(uptr)                                          \
-    if ((uptr)->a_cancel)                                         \
-        (uptr)->a_cancel (uptr);                                  \
-    else {                                                        \
-        AIO_UPDATE_QUEUE;                                         \
-        if ((uptr)->a_next) {                                     \
-            UNIT *cptr;                                           \
-            pthread_mutex_lock (&sim_timer_lock);                 \
-            if ((uptr) == sim_wallclock_queue) {                  \
-                sim_wallclock_queue = (uptr)->a_next;             \
-                (uptr)->a_next = NULL;                            \
-                sim_debug (SIM_DBG_EVENT, sim_dflt_dev, "Canceling Timer Event for %s\n", sim_uname(uptr));\
-                sim_timer_event_canceled = TRUE;                  \
-                pthread_cond_signal (&sim_timer_wake);            \
-                }                                                 \
-            else                                                  \
-                for (cptr = sim_wallclock_queue;                  \
-                    (cptr != QUEUE_LIST_END);                     \
-                    cptr = cptr->a_next)                          \
-                    if (cptr->a_next == (uptr)) {                 \
-                        cptr->a_next = (uptr)->a_next;            \
-                        (uptr)->a_next = NULL;                    \
-                        sim_debug (SIM_DBG_EVENT, sim_dflt_dev, "Canceling Timer Event for %s\n", sim_uname(uptr));\
-                        break;                                    \
-                        }                                         \
-            if ((uptr)->a_next == NULL)                           \
-                (uptr)->a_due_time = (uptr)->a_usec_delay = 0;    \
-            else {                                                \
-                int tmr;                                          \
-                for (tmr=0; tmr<SIM_NTIMERS; tmr++) {             \
-                    if ((uptr) == sim_clock_cosched_queue[tmr]) { \
-                        sim_clock_cosched_queue[tmr] = (uptr)->a_next; \
-                        (uptr)->a_next = NULL;                    \
-                        }                                         \
-                    else                                          \
-                        for (cptr = sim_clock_cosched_queue[tmr]; \
-                            (cptr != QUEUE_LIST_END);             \
-                            cptr = cptr->a_next)                  \
-                            if (cptr->a_next == (uptr)) {         \
-                                cptr->a_next = (uptr)->a_next;    \
-                                (uptr)->a_next = NULL;            \
-                                break;                            \
-                                }                                 \
-                    if ((uptr)->a_next == NULL) {                 \
-                        sim_debug (SIM_DBG_EVENT, sim_dflt_dev, "Canceling Clock Coscheduling Event for %s\n", sim_uname(uptr));\
-                        }                                         \
-                    }                                             \
-                }                                                 \
-            while (sim_timer_event_canceled) {                    \
-                pthread_mutex_unlock (&sim_timer_lock);           \
-                sim_debug (SIM_DBG_EVENT, sim_dflt_dev, "Waiting for Timer Event cancelation for %s\n", sim_uname(uptr));\
-                sim_os_ms_sleep (0);                              \
-                pthread_mutex_lock (&sim_timer_lock);             \
-                }                                                 \
-            pthread_mutex_unlock (&sim_timer_lock);               \
-            }                                                     \
+#if defined(SIM_ASYNCH_MUX)
+#define AIO_CANCEL(uptr)                                      \
+    if (((uptr)->dynflags & UNIT_TM_POLL) &&                  \
+        !((uptr)->next) && !((uptr)->a_next)) {               \
+        (uptr)->a_polling_now = FALSE;                        \
+        sim_tmxr_poll_count -= (uptr)->a_poll_waiter_count;   \
+        (uptr)->a_poll_waiter_count = 0;                      \
         }
-#endif
-#if defined(SIM_ASYNCH_MUX) && !defined(SIM_ASYNCH_CLOCKS)
-#define AIO_CANCEL(uptr)                                          \
-    if ((uptr)->a_cancel)                                         \
-        (uptr)->a_cancel (uptr);                                  \
-    else {                                                        \
-        if (((uptr)->dynflags & UNIT_TM_POLL) &&                  \
-            !((uptr)->next) && !((uptr)->a_next)) {               \
-            (uptr)->a_polling_now = FALSE;                        \
-            sim_tmxr_poll_count -= (uptr)->a_poll_waiter_count;   \
-            (uptr)->a_poll_waiter_count = 0;                      \
-            }                                                     \
-        }
-#endif /* defined(SIM_ASYNCH_MUX) && !defined(SIM_ASYNCH_CLOCKS) */
-#if defined(SIM_ASYNCH_MUX) && defined(SIM_ASYNCH_CLOCKS)
-#define AIO_CANCEL(uptr)                                          \
-    if ((uptr)->a_cancel)                                         \
-        (uptr)->a_cancel (uptr);                                  \
-    else {                                                        \
-        AIO_UPDATE_QUEUE;                                         \
-        if (((uptr)->dynflags & UNIT_TM_POLL) &&                  \
-            !((uptr)->next) && !((uptr)->a_next)) {               \
-            (uptr)->a_polling_now = FALSE;                        \
-            sim_tmxr_poll_count -= (uptr)->a_poll_waiter_count;   \
-            (uptr)->a_poll_waiter_count = 0;                      \
-            }                                                     \
-        if ((uptr)->a_next) {                                     \
-            UNIT *cptr;                                           \
-            pthread_mutex_lock (&sim_timer_lock);                 \
-            if ((uptr) == sim_wallclock_queue) {                  \
-                sim_wallclock_queue = (uptr)->a_next;             \
-                (uptr)->a_next = NULL;                            \
-                sim_debug (SIM_DBG_EVENT, sim_dflt_dev, "Canceling Timer Event for %s\n", sim_uname(uptr));\
-                sim_timer_event_canceled = TRUE;                  \
-                pthread_cond_signal (&sim_timer_wake);            \
-                }                                                 \
-            else                                                  \
-                for (cptr = sim_wallclock_queue;                  \
-                    (cptr != QUEUE_LIST_END);                     \
-                    cptr = cptr->a_next)                          \
-                    if (cptr->a_next == (uptr)) {                 \
-                        cptr->a_next = (uptr)->a_next;            \
-                        (uptr)->a_next = NULL;                    \
-                        sim_debug (SIM_DBG_EVENT, sim_dflt_dev, "Canceling Timer Event for %s\n", sim_uname(uptr));\
-                        break;                                    \
-                        }                                         \
-            if ((uptr)->a_next == NULL)                           \
-                (uptr)->a_due_time = (uptr)->a_usec_delay = 0;    \
-            else {                                                \
-                if ((uptr) == sim_clock_cosched_queue) {          \
-                    sim_clock_cosched_queue = (uptr)->a_next;     \
-                    (uptr)->a_next = NULL;                        \
-                    }                                             \
-                else                                              \
-                    for (cptr = sim_clock_cosched_queue;          \
-                        (cptr != QUEUE_LIST_END);                 \
-                        cptr = cptr->a_next)                      \
-                        if (cptr->a_next == (uptr)) {             \
-                            cptr->a_next = (uptr)->a_next;        \
-                            (uptr)->a_next = NULL;                \
-                            break;                                \
-                            }                                     \
-                if ((uptr)->a_next == NULL) {                     \
-                    sim_debug (SIM_DBG_EVENT, sim_dflt_dev, "Canceling Clock Coscheduling Event for %s\n", sim_uname(uptr));\
-                    }                                             \
-                }                                                 \
-            while (sim_timer_event_canceled) {                    \
-                pthread_mutex_unlock (&sim_timer_lock);           \
-                sim_debug (SIM_DBG_EVENT, sim_dflt_dev, "Waiting for Timer Event cancelation for %s\n", sim_uname(uptr));\
-                sim_os_ms_sleep (0);                              \
-                pthread_mutex_lock (&sim_timer_lock);             \
-                }                                                 \
-            pthread_mutex_unlock (&sim_timer_lock);               \
-            }                                                     \
-        }
-#endif
-#if defined(SIM_ASYNCH_CLOCKS)
-#define AIO_RETURN_TIME(uptr)                                     \
-    if (1) {                                                      \
-        pthread_mutex_lock (&sim_timer_lock);                     \
-        for (cptr = sim_wallclock_queue;                          \
-             cptr != QUEUE_LIST_END;                              \
-             cptr = cptr->a_next)                                 \
-            if ((uptr) == cptr) {                                 \
-                double inst_per_sec = sim_timer_inst_per_sec ();  \
-                int32 result;                                     \
-                                                                  \
-                result = (int32)(((uptr)->a_due_time - sim_timenow_double())*inst_per_sec);\
-                if (result < 0)                                   \
-                    result = 0;                                   \
-                pthread_mutex_unlock (&sim_timer_lock);           \
-                return result + 1;                                \
-                }                                                 \
-        pthread_mutex_unlock (&sim_timer_lock);                   \
-        if ((uptr)->a_next) /* On asynch queue? */                \
-            return (uptr)->a_event_time + 1;                      \
-        }                                                         \
-    else                                                          \
-        (void)0
-#else
-#define AIO_RETURN_TIME(uptr) (void)0
-#endif
+#endif /* defined(SIM_ASYNCH_MUX) */
+#if !defined(AIO_CANCEL)
+#define AIO_CANCEL(uptr)
+#endif /* !defined(AIO_CANCEL) */
 #define AIO_EVENT_BEGIN(uptr)                                     \
     do {                                                          \
         int __was_poll = uptr->dynflags & UNIT_TM_POLL
@@ -1103,33 +1146,27 @@ extern int32 sim_asynch_inst_latency;
 /* This approach uses intrinsics to manage access to the link list head     */
 /* sim_asynch_queue.  This implementation is a completely lock free design  */
 /* which avoids the potential ABA issues.                                   */
-#define AIO_QUEUE_MODE "Lock free asynchronous event queue access"
+#define AIO_QUEUE_MODE "Lock free asynchronous event queue"
 #define AIO_INIT                                                  \
-    if (1) {                                                      \
+    do {                                                          \
       int tmr;                                                    \
       sim_asynch_main_threadid = pthread_self();                  \
       /* Empty list/list end uses the point value (void *)1.      \
          This allows NULL in an entry's a_next pointer to         \
          indicate that the entry is not currently in any list */  \
       sim_asynch_queue = QUEUE_LIST_END;                          \
-      sim_wallclock_queue = QUEUE_LIST_END;                       \
-      sim_wallclock_entry = NULL;                                 \
       for (tmr=0; tmr<SIM_NTIMERS; tmr++)                         \
           sim_clock_cosched_queue[tmr] = QUEUE_LIST_END;          \
-      }                                                           \
-    else                                                          \
-      (void)0
+      } while (0)
 #define AIO_CLEANUP                                               \
-    if (1) {                                                      \
+    do {                                                          \
       pthread_mutex_destroy(&sim_asynch_lock);                    \
       pthread_cond_destroy(&sim_asynch_wake);                     \
       pthread_mutex_destroy(&sim_timer_lock);                     \
       pthread_cond_destroy(&sim_timer_wake);                      \
       pthread_mutex_destroy(&sim_tmxr_poll_lock);                 \
       pthread_cond_destroy(&sim_tmxr_poll_cond);                  \
-      }                                                           \
-    else                                                          \
-      (void)0
+      } while (0)
 #ifdef _WIN32
 #elif defined(__GCC_HAVE_SYNC_COMPARE_AND_SWAP_4) || defined(__GCC_HAVE_SYNC_COMPARE_AND_SWAP_8)
 #define InterlockedCompareExchangePointer(Destination, Exchange, Comparand) __sync_val_compare_and_swap(Destination, Comparand, Exchange)
@@ -1138,100 +1175,23 @@ extern int32 sim_asynch_inst_latency;
 #else
 #error "Implementation of function InterlockedCompareExchangePointer() is needed to build with USE_AIO_INTRINSICS"
 #endif
-#define AIO_QUEUE_VAL (UNIT *)(InterlockedCompareExchangePointer(&sim_asynch_queue, sim_asynch_queue, NULL))
-#define AIO_QUEUE_SET(val, queue) (UNIT *)(InterlockedCompareExchangePointer(&sim_asynch_queue, val, queue))
-#define AIO_UPDATE_QUEUE                                                         \
-    if (AIO_QUEUE_VAL != QUEUE_LIST_END) { /* List !Empty */                     \
-      UNIT *q, *uptr;                                                            \
-      int32 a_event_time;                                                        \
-      do                                                                         \
-        q = AIO_QUEUE_VAL;                                                       \
-        while (q != AIO_QUEUE_SET(QUEUE_LIST_END, q));                           \
-      while (q != QUEUE_LIST_END) {   /* List !Empty */                          \
-        sim_debug (SIM_DBG_AIO_QUEUE, sim_dflt_dev, "Migrating Asynch event for %s after %d instructions\n", sim_uname(q), q->a_event_time);\
-        uptr = q;                                                                \
-        q = q->a_next;                                                           \
-        uptr->a_next = NULL;        /* hygiene */                                \
-        if (uptr->a_activate_call != &sim_activate_notbefore) {                  \
-          a_event_time = uptr->a_event_time-((sim_asynch_inst_latency+1)/2);     \
-          if (a_event_time < 0)                                                  \
-            a_event_time = 0;                                                    \
-          }                                                                      \
-        else                                                                     \
-          a_event_time = uptr->a_event_time;                                     \
-        uptr->a_activate_call (uptr, a_event_time);                              \
-        if (uptr->a_check_completion) {                                          \
-          sim_debug (SIM_DBG_AIO_QUEUE, sim_dflt_dev, "Calling Completion Check for asynch event on %s\n", sim_uname(uptr));\
-          uptr->a_check_completion (uptr);                                       \
-          }                                                                      \
-      }                                                                          \
-    } else (void)0
+#define AIO_ILOCK AIO_LOCK
+#define AIO_IUNLOCK AIO_UNLOCK
+#define AIO_QUEUE_VAL (UNIT *)(InterlockedCompareExchangePointer((void * volatile *)&sim_asynch_queue, (void *)sim_asynch_queue, NULL))
+#define AIO_QUEUE_SET(newval, oldval) (UNIT *)(InterlockedCompareExchangePointer((void * volatile *)&sim_asynch_queue, (void *)newval, oldval))
+#define AIO_UPDATE_QUEUE sim_aio_update_queue ()
 #define AIO_ACTIVATE(caller, uptr, event_time)                                   \
     if (!pthread_equal ( pthread_self(), sim_asynch_main_threadid )) {           \
-      UNIT *ouptr = (uptr);                                                      \
-      sim_debug (SIM_DBG_AIO_QUEUE, sim_dflt_dev, "Queueing Asynch event for %s after %d instructions\n", sim_uname(ouptr), event_time);\
-      if (ouptr->a_next) {                                                       \
-        ouptr->a_activate_call = sim_activate_abs;                               \
-      } else {                                                                   \
-        UNIT *q, *qe;                                                            \
-        ouptr->a_event_time = event_time;                                        \
-        ouptr->a_activate_call = caller;                                         \
-        ouptr->a_next = QUEUE_LIST_END;                 /* Mark as on list */    \
-        do {                                                                     \
-          do                                                                     \
-            q = AIO_QUEUE_VAL;                                                   \
-            while (q != AIO_QUEUE_SET(QUEUE_LIST_END, q));/* Grab current list */\
-          for (qe = ouptr; qe->a_next != QUEUE_LIST_END; qe = qe->a_next);       \
-          qe->a_next = q;                               /* append current list */\
-          do                                                                     \
-            q = AIO_QUEUE_VAL;                                                   \
-            while (q != AIO_QUEUE_SET(ouptr, q));                                \
-          ouptr = q;                                                             \
-          } while (ouptr != QUEUE_LIST_END);                                     \
-      }                                                                          \
-      sim_asynch_check = 0;                             /* try to force check */ \
-      if (sim_idle_wait) {                                                       \
-        sim_debug (TIMER_DBG_IDLE, &sim_timer_dev, "waking due to event on %s after %d instructions\n", sim_uname(ouptr), event_time);\
-        pthread_cond_signal (&sim_asynch_wake);                                  \
-        }                                                                        \
+      sim_aio_activate ((ACTIVATE_API)caller, uptr, event_time);                 \
       return SCPE_OK;                                                            \
     } else (void)0
-#define AIO_ACTIVATE_LIST(caller, list, event_time)                              \
-    if (list) {                                                                  \
-      UNIT *ouptr, *q, *qe;                                                      \
-      sim_debug (SIM_DBG_AIO_QUEUE, sim_dflt_dev, "Queueing Asynch events for %s after %d instructions\n", sim_uname(list), event_time);\
-      for (qe=(list); qe->a_next != QUEUE_LIST_END;) {                           \
-          qe->a_event_time = event_time;                                         \
-          qe->a_activate_call = caller;                                          \
-          qe = qe->a_next;                                                       \
-          }                                                                      \
-      qe->a_event_time = event_time;                                             \
-      qe->a_activate_call = caller;                                              \
-      ouptr = (list);                                                            \
-      do {                                                                       \
-        do                                                                       \
-          q = AIO_QUEUE_VAL;                                                     \
-          while (q != AIO_QUEUE_SET(QUEUE_LIST_END, q));/* Grab current list */  \
-        for (qe = ouptr; qe->a_next != QUEUE_LIST_END; qe = qe->a_next);         \
-        qe->a_next = q;                               /* append current list */  \
-        do                                                                       \
-          q = AIO_QUEUE_VAL;                                                     \
-          while (q != AIO_QUEUE_SET(ouptr, q));                                  \
-        ouptr = q;                                                               \
-        } while (ouptr != QUEUE_LIST_END);                                       \
-      sim_asynch_check = 0;                             /* try to force check */ \
-      if (sim_idle_wait) {                                                       \
-        sim_debug (TIMER_DBG_IDLE, &sim_timer_dev, "waking due to event on %s after %d instructions\n", sim_uname(ouptr), event_time);\
-        pthread_cond_signal (&sim_asynch_wake);                                  \
-        }                                                                        \
-      } else (void)0
 #else /* !USE_AIO_INTRINSICS */
 /* This approach uses a pthread mutex to manage access to the link list     */
 /* head sim_asynch_queue.  It will always work, but may be slower than the  */
 /* lock free approach when using USE_AIO_INTRINSICS                         */
-#define AIO_QUEUE_MODE "Lock based asynchronous event queue access"
+#define AIO_QUEUE_MODE "Lock based asynchronous event queue"
 #define AIO_INIT                                                  \
-    if (1) {                                                      \
+    do {                                                          \
       int tmr;                                                    \
       pthread_mutexattr_t attr;                                   \
                                                                   \
@@ -1244,51 +1204,23 @@ extern int32 sim_asynch_inst_latency;
          This allows NULL in an entry's a_next pointer to         \
          indicate that the entry is not currently in any list */  \
       sim_asynch_queue = QUEUE_LIST_END;                          \
-      sim_wallclock_queue = QUEUE_LIST_END;                       \
-      sim_wallclock_entry = NULL;                                 \
       for (tmr=0; tmr<SIM_NTIMERS; tmr++)                         \
           sim_clock_cosched_queue[tmr] = QUEUE_LIST_END;          \
-      }                                                           \
-    else                                                          \
-      (void)0
+      } while (0)
 #define AIO_CLEANUP                                               \
-    if (1) {                                                      \
+    do {                                                          \
       pthread_mutex_destroy(&sim_asynch_lock);                    \
       pthread_cond_destroy(&sim_asynch_wake);                     \
       pthread_mutex_destroy(&sim_timer_lock);                     \
       pthread_cond_destroy(&sim_timer_wake);                      \
       pthread_mutex_destroy(&sim_tmxr_poll_lock);                 \
       pthread_cond_destroy(&sim_tmxr_poll_cond);                  \
-      }                                                           \
-    else                                                          \
-      (void)0
-#define AIO_UPDATE_QUEUE                                                         \
-    if (1) {                                                                     \
-      UNIT *uptr;                                                                \
-      AIO_LOCK;                                                                  \
-      while (sim_asynch_queue != QUEUE_LIST_END) { /* List !Empty */             \
-        int32 a_event_time;                                                      \
-        uptr = sim_asynch_queue;                                                 \
-        sim_debug (SIM_DBG_AIO_QUEUE, sim_dflt_dev, "Migrating Asynch event for %s after %d instructions\n", sim_uname(uptr), uptr->a_event_time);\
-        sim_asynch_queue = uptr->a_next;                                         \
-        uptr->a_next = NULL;            /* hygiene */                            \
-        if (uptr->a_activate_call != &sim_activate_notbefore) {                  \
-          a_event_time = uptr->a_event_time-((sim_asynch_inst_latency+1)/2);     \
-          if (a_event_time < 0)                                                  \
-            a_event_time = 0;                                                    \
-          }                                                                      \
-        else                                                                     \
-          a_event_time = uptr->a_event_time;                                     \
-        AIO_UNLOCK;                                                              \
-        uptr->a_activate_call (uptr, a_event_time);                              \
-        if (uptr->a_check_completion) {                                          \
-          sim_debug (SIM_DBG_AIO_QUEUE, sim_dflt_dev, "Calling Completion Check for asynch event on %s\n", sim_uname(uptr));\
-          uptr->a_check_completion (uptr);                                       \
-          }                                                                      \
-        AIO_LOCK;                                                                \
-      }                                                                          \
-      AIO_UNLOCK;                                                                \
-    } else (void)0
+      } while (0)
+#define AIO_ILOCK AIO_LOCK
+#define AIO_IUNLOCK AIO_UNLOCK
+#define AIO_QUEUE_VAL sim_asynch_queue
+#define AIO_QUEUE_SET(newval, oldval) ((sim_asynch_queue = newval),oldval)
+#define AIO_UPDATE_QUEUE sim_aio_update_queue ()
 #define AIO_ACTIVATE(caller, uptr, event_time)                         \
     if (!pthread_equal ( pthread_self(), sim_asynch_main_threadid )) { \
       sim_debug (SIM_DBG_AIO_QUEUE, sim_dflt_dev, "Queueing Asynch event for %s after %d instructions\n", sim_uname(uptr), event_time);\
@@ -1298,7 +1230,7 @@ extern int32 sim_asynch_inst_latency;
       } else {                                                         \
         uptr->a_next = sim_asynch_queue;                               \
         uptr->a_event_time = event_time;                               \
-        uptr->a_activate_call = caller;                                \
+        uptr->a_activate_call = (ACTIVATE_API)&caller;                 \
         sim_asynch_queue = uptr;                                       \
       }                                                                \
       if (sim_idle_wait) {                                             \
@@ -1309,40 +1241,19 @@ extern int32 sim_asynch_inst_latency;
       sim_asynch_check = 0;                                            \
       return SCPE_OK;                                                  \
     } else (void)0
-#define AIO_ACTIVATE_LIST(caller, list, event_time)                              \
-    if (list) {                                                                  \
-      UNIT *qe;                                                                  \
-      sim_debug (SIM_DBG_AIO_QUEUE, sim_dflt_dev, "Queueing Asynch events for %s after %d instructions\n", sim_uname(list), event_time);\
-      for (qe=list; qe->a_next != QUEUE_LIST_END;) {                             \
-          qe->a_event_time = event_time;                                         \
-          qe->a_activate_call = caller;                                          \
-          qe = qe->a_next;                                                       \
-          }                                                                      \
-      qe->a_event_time = event_time;                                             \
-      qe->a_activate_call = caller;                                              \
-      AIO_LOCK;                                                                  \
-      qe->a_next = sim_asynch_queue;                                             \
-      sim_asynch_queue = list;                                                   \
-      sim_asynch_check = 0;                             /* try to force check */ \
-      if (sim_idle_wait) {                                                       \
-        sim_debug (TIMER_DBG_IDLE, &sim_timer_dev, "waking due to event on %s after %d instructions\n", sim_uname(list), event_time);\
-        pthread_cond_signal (&sim_asynch_wake);                                  \
-        }                                                                        \
-      AIO_UNLOCK;                                                                \
-      } else (void)0
 #endif /* USE_AIO_INTRINSICS */
-#define AIO_VALIDATE if (!pthread_equal ( pthread_self(), sim_asynch_main_threadid )) abort()
+#define AIO_VALIDATE if (!pthread_equal ( pthread_self(), sim_asynch_main_threadid )) {sim_printf("Improper thread context for operation\n"); abort();}
 #define AIO_CHECK_EVENT                                                \
     if (0 > --sim_asynch_check) {                                      \
       AIO_UPDATE_QUEUE;                                                \
       sim_asynch_check = sim_asynch_inst_latency;                      \
-    } else (void)0
+      } else (void)0
 #define AIO_SET_INTERRUPT_LATENCY(instpersec)                                                   \
-    if (1) {                                                                                    \
+    do {                                                                                        \
       sim_asynch_inst_latency = (int32)((((double)(instpersec))*sim_asynch_latency)/1000000000);\
       if (sim_asynch_inst_latency == 0)                                                         \
         sim_asynch_inst_latency = 1;                                                            \
-    } else (void)0
+      } while (0)
 #else /* !SIM_ASYNCH_IO */
 #define AIO_QUEUE_MODE "Asynchronous I/O is not available"
 #define AIO_UPDATE_QUEUE
@@ -1354,7 +1265,6 @@ extern int32 sim_asynch_inst_latency;
 #define AIO_LOCK
 #define AIO_UNLOCK
 #define AIO_CLEANUP
-#define AIO_RETURN_TIME(uptr)
 #define AIO_EVENT_BEGIN(uptr)
 #define AIO_EVENT_COMPLETE(uptr, reason)
 #define AIO_IS_ACTIVE(uptr) FALSE
@@ -1362,5 +1272,9 @@ extern int32 sim_asynch_inst_latency;
 #define AIO_SET_INTERRUPT_LATENCY(instpersec)
 #define AIO_TLS
 #endif /* SIM_ASYNCH_IO */
+
+#ifdef  __cplusplus
+}
+#endif
 
 #endif

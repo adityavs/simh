@@ -332,8 +332,9 @@ t_stat sim_instr (void)
             reason = STOP_IBKPT;        /* stop simulation */
             break;
         }
-        IR = OP = fetch_byte(0);        /* fetch instruction */
+
         sim_interval--;
+        IR = OP = fetch_byte(0);        /* fetch instruction */
 
         /* The Big Instruction Decode Switch */
 
@@ -1924,7 +1925,7 @@ t_stat m6800_reset (DEVICE *dptr)
     takes the address from the hex record or the current PC for binary.
 */
 
-t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int flag)
+t_stat sim_load (FILE *fileref, CONST char *cptr, CONST char *fnam, int flag)
 {
     int32 i, addr = 0, cnt = 0;
 
@@ -1951,11 +1952,6 @@ t_stat sim_load (FILE *fileref, char *cptr, char *fnam, int flag)
         status  =   error code
         for M6800
 */
-/* Use scp.c provided fprintf function */
-#define fprintf Fprintf
-#define fputs(_s,f) Fprintf(f,"%s",_s)
-#define fputc(_c,f) Fprintf(f,"%c",_c)
-
 t_stat fprint_sym (FILE *of, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
 {
     int32 i, inst, inst1;
@@ -2011,7 +2007,7 @@ t_stat fprint_sym (FILE *of, t_addr addr, t_value *val, UNIT *uptr, int32 sw)
         status  =   error status
 */
 
-t_stat parse_sym (char *cptr, t_addr addr, UNIT *uptr, t_value *val, int32 sw)
+t_stat parse_sym (CONST char *cptr, t_addr addr, UNIT *uptr, t_value *val, int32 sw)
 {
     return (-2);
 }

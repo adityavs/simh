@@ -40,11 +40,12 @@
 #define MAX_DSK_SIZE        (DSK_TRACSIZE * MAX_TRACKS)
 
 static t_stat fif_reset(DEVICE *dptr);
-static t_stat fif_set_verbose(UNIT *uptr, int32 value, char *cptr, void *desc);
+static t_stat fif_set_verbose(UNIT *uptr, int32 value, CONST char *cptr, void *desc);
 static int32 fif_io(const int32 port, const int32 io, const int32 data);
+static const char* fif_description(DEVICE *dptr);
 
-extern t_stat set_iobase(UNIT *uptr, int32 val, char *cptr, void *desc);
-extern t_stat show_iobase(FILE *st, UNIT *uptr, int32 val, void *desc);
+extern t_stat set_iobase(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+extern t_stat show_iobase(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 extern uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
         int32 (*routine)(const int32, const int32, const int32), uint8 unmap);
 extern uint8 GetBYTEWrapper(const uint32 Addr);
@@ -81,7 +82,11 @@ static UNIT fif_unit[] = {
     { UDATA (NULL, UNIT_FIX + UNIT_ATTABLE + UNIT_DISABLE + UNIT_ROABLE, MAX_DSK_SIZE) }
 };
 
-#define FIF_NAME    "IMSAI FIF"
+#define FIF_NAME    "IMSAI"
+
+static const char* fif_description(DEVICE *dptr) {
+    return FIF_NAME;
+}
 
 static REG fif_reg[] = {
     { DRDATAD (DISK,         current_disk,   4,
@@ -113,7 +118,7 @@ DEVICE fif_dev = {
     NULL, NULL, &fif_reset,
     NULL, NULL, NULL,
     &fif_info_data, (DEV_DISABLE | DEV_DIS), 0,
-    NULL, NULL, FIF_NAME
+    NULL, NULL, NULL, NULL, NULL, NULL, &fif_description
 };
 
 static void resetDSKWarningFlags(void) {
@@ -123,7 +128,7 @@ static void resetDSKWarningFlags(void) {
     warnDSK11 = 0;
 }
 
-static t_stat fif_set_verbose(UNIT *uptr, int32 value, char *cptr, void *desc) {
+static t_stat fif_set_verbose(UNIT *uptr, int32 value, CONST char *cptr, void *desc) {
     resetDSKWarningFlags();
     return SCPE_OK;
 }
@@ -222,7 +227,7 @@ static int DoDiskOperation(desc_t *dsc, uint8 val)
     }
     current_disk_flags = (fif_dev.units + current_disk) -> flags;
     if ((current_disk_flags & UNIT_ATT) == 0) { /* nothing attached? */
-        if ( (current_disk_flags & UNIT_DSK_VERBOSE) && (warnAttached[current_disk] < warnLevelDSK) ) {
+        if ((current_disk_flags & UNIT_DSK_VERBOSE) && (warnAttached[current_disk] < warnLevelDSK)) {
             warnAttached[current_disk]++;
 /*02*/sim_printf("FIF%i: " ADDRESS_FORMAT " Attempt to select unattached FIF%d - ignored." NLP, current_disk, PCX, current_disk);
         }
@@ -240,20 +245,26 @@ static int DoDiskOperation(desc_t *dsc, uint8 val)
             /*Sleep(250); */
             memset(blanksec, 0, SEC_SZ);
             addr = dsc->track * SPT;
-            sim_fseek(cpx, addr * SEC_SZ, SEEK_SET);
-
-            /* write a track worth of sectors */
-            for (kt=0; kt < SPT; kt++) {
-                sim_fwrite(blanksec, 1, sizeof(blanksec), cpx);
+            if (sim_fseek(cpx, addr * SEC_SZ, SEEK_SET) == 0) {
+                /* write a track worth of sectors */
+                for (kt=0; kt < SPT; kt++) {
+                    sim_fwrite(blanksec, 1, sizeof(blanksec), cpx);
+                }
+            } else {
+                if ((current_disk_flags & UNIT_DSK_VERBOSE) &&
+                    (warnAttached[current_disk] < warnLevelDSK)) {
+                    warnAttached[current_disk]++;
+                    sim_printf("FIF%i: " ADDRESS_FORMAT " sim_fseek error." NLP, current_disk, PCX);
+                }
             }
             break;
 
         case READ_SEC:
             addr = (dsc->track * SPT) + dsc->sector - 1;
-            sim_fseek(cpx, addr * SEC_SZ, SEEK_SET);
+            if (sim_fseek(cpx, addr * SEC_SZ, SEEK_SET) == 0) {
             rtn = sim_fread(blanksec, 1, SEC_SZ, cpx);
-            if ( (rtn != SEC_SZ) && (current_disk_flags & UNIT_DSK_VERBOSE) &&
-                (warnAttached[current_disk] < warnLevelDSK) ) {
+                if ((rtn != SEC_SZ) && (current_disk_flags & UNIT_DSK_VERBOSE) &&
+                    (warnAttached[current_disk] < warnLevelDSK)) {
                 warnAttached[current_disk]++;
                 sim_printf("FIF%i: " ADDRESS_FORMAT " sim_fread error." NLP, current_disk, PCX);
             }
@@ -261,16 +272,30 @@ static int DoDiskOperation(desc_t *dsc, uint8 val)
             for (kt = 0; kt < SEC_SZ; kt++) {
                 PutBYTEWrapper(addr++, blanksec[kt]);
             }
+            } else {
+                if ((current_disk_flags & UNIT_DSK_VERBOSE) &&
+                    (warnAttached[current_disk] < warnLevelDSK)) {
+                    warnAttached[current_disk]++;
+                    sim_printf("FIF%i: " ADDRESS_FORMAT " sim_fseek error." NLP, current_disk, PCX);
+                }
+            }
             break;
 
         case WRITE_SEC:
             addr = (dsc->track * SPT) + dsc->sector - 1;
-            sim_fseek(cpx, addr * SEC_SZ, SEEK_SET);
+            if (sim_fseek(cpx, addr * SEC_SZ, SEEK_SET) == 0) {
             addr = dsc->addr_l + (dsc->addr_h << 8); /* no assumption on endianness */
             for (kt = 0; kt < SEC_SZ; kt++) {
                 blanksec[kt] = GetBYTEWrapper(addr++);
             }
             sim_fwrite(blanksec, 1, SEC_SZ, cpx);
+            } else {
+                if ((current_disk_flags & UNIT_DSK_VERBOSE) &&
+                    (warnAttached[current_disk] < warnLevelDSK)) {
+                    warnAttached[current_disk]++;
+                    sim_printf("FIF%i: " ADDRESS_FORMAT " sim_fseek error." NLP, current_disk, PCX);
+                }
+            }
             break;
 
         default:

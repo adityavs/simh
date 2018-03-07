@@ -1,31 +1,38 @@
 /* hp2100_dr.c: HP 2100 12606B/12610B fixed head disk/drum simulator
 
-   Copyright (c) 1993-2014, Robert M. Supnik
+   Copyright (c) 1993-2016, Robert M. Supnik
+   Copyright (c) 2017       J. David Bryan
 
-   Permission is hereby granted, free of charge, to any person obtaining a
-   copy of this software and associated documentation files (the "Software"),
-   to deal in the Software without restriction, including without limitation
-   the rights to use, copy, modify, merge, publish, distribute, sublicense,
-   and/or sell copies of the Software, and to permit persons to whom the
-   Software is furnished to do so, subject to the following conditions:
+   Permission is hereby granted, free of charge, to any person obtaining a copy
+   of this software and associated documentation files (the "Software"), to deal
+   in the Software without restriction, including without limitation the rights
+   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+   copies of the Software, and to permit persons to whom the Software is
+   furnished to do so, subject to the following conditions:
 
    The above copyright notice and this permission notice shall be included in
    all copies or substantial portions of the Software.
 
    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
-   ROBERT M SUPNIK BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER
-   IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
-   CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+   AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+   ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+   WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-   Except as contained in this notice, the name of Robert M Supnik shall not be
+   Except as contained in this notice, the names of the authors shall not be
    used in advertising or otherwise to promote the sale, use or other dealings
-   in this Software without prior written authorization from Robert M Supnik.
+   in this Software without prior written authorization from the authors.
 
    DR           12606B 2770/2771 fixed head disk
                 12610B 2773/2774/2775 drum
 
+   19-Jul-17    JDB     Removed "dr_stopioe" variable and register
+   11-Jul-17    JDB     Renamed "ibl_copy" to "cpu_ibl"
+   27-Feb-17    JDB     ibl_copy no longer returns a status code
+   10-Nov-16    JDB     Modified the drc_boot routine to use the BBDL
+   05-Aug-16    JDB     Renamed the P register from "PC" to "PR"
+   13-May-16    JDB     Modified for revised SCP API function parameter types
    30-Dec-14    JDB     Added S-register parameters to ibl_copy
    24-Dec-14    JDB     Added casts for explicit downward conversions
    10-Feb-12    JDB     Deprecated DEVNO in favor of SC
@@ -106,9 +113,13 @@
    - inst timing = 6 inst/word, 12288 inst/revolution
 */
 
+
+
 #include "hp2100_defs.h"
 #include "hp2100_cpu.h"
 #include <math.h>
+
+
 
 /* Constants */
 
@@ -192,7 +203,6 @@ int32 drd_ibuf = 0;                                     /* input buffer */
 int32 drd_obuf = 0;                                     /* output buffer */
 int32 drd_ptr = 0;                                      /* sector pointer */
 int32 drc_pcount = 1;                                   /* number of prot tracks */
-int32 dr_stopioe = 1;                                   /* stop on error */
 int32 dr_time = DR_DTIME;                               /* time per word */
 
 static int32 sz_tab[16] = {
@@ -204,13 +214,13 @@ IOHANDLER drcio;
 
 t_stat drc_svc (UNIT *uptr);
 t_stat drc_reset (DEVICE *dptr);
-t_stat drc_attach (UNIT *uptr, char *cptr);
+t_stat drc_attach (UNIT *uptr, CONST char *cptr);
 t_stat drc_boot (int32 unitno, DEVICE *dptr);
 int32 dr_incda (int32 trk, int32 sec, int32 ptr);
 int32 dr_seccntr (double simtime);
-t_stat dr_set_prot (UNIT *uptr, int32 val, char *cptr, void *desc);
-t_stat dr_show_prot (FILE *st, UNIT *uptr, int32 val, void *desc);
-t_stat dr_set_size (UNIT *uptr, int32 val, char *cptr, void *desc);
+t_stat dr_set_prot (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+t_stat dr_show_prot (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+t_stat dr_set_size (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 
 DEVICE drd_dev, drc_dev;
 
@@ -249,8 +259,8 @@ REG drd_reg[] = {
     };
 
 MTAB drd_mod[] = {
-    { MTAB_XTD | MTAB_VDV,            1, "SC",    "SC",    &hp_setsc,  &hp_showsc,  &drd_dev },
-    { MTAB_XTD | MTAB_VDV | MTAB_NMO, 1, "DEVNO", "DEVNO", &hp_setdev, &hp_showdev, &drd_dev },
+    { MTAB_XTD | MTAB_VDV,             2u, "SC",    "SC",    &hp_set_dib, &hp_show_dib, (void *) &dr_dib },
+    { MTAB_XTD | MTAB_VDV | MTAB_NMO, ~2u, "DEVNO", "DEVNO", &hp_set_dib, &hp_show_dib, (void *) &dr_dib },
     { 0 }
     };
 
@@ -281,7 +291,6 @@ REG drc_reg[] = {
     { ORDATA (STA, drc_sta, 16) },
     { FLDATA (RUN, drc_run, 0) },
     { DRDATA (TIME, dr_time, 24), REG_NZ + PV_LEFT },
-    { FLDATA (STOP_IOE, dr_stopioe, 0) },
     { ORDATA (SC, drc_dib.select_code, 6), REG_HRO },
     { ORDATA (DEVNO, drc_dib.select_code, 6), REG_HRO },
     { DRDATA (CAPAC, drc_unit.capac, 24), REG_HRO },
@@ -305,8 +314,8 @@ MTAB drc_mod[] = {
     { UNIT_PROT, 0, "unprotected", "UNPROTECTED", NULL },
     { MTAB_XTD | MTAB_VDV, 0, "TRACKPROT", "TRACKPROT",
       &dr_set_prot, &dr_show_prot, NULL },
-    { MTAB_XTD | MTAB_VDV,            1, "SC",    "SC",    &hp_setsc,  &hp_showsc,  &drd_dev },
-    { MTAB_XTD | MTAB_VDV | MTAB_NMO, 1, "DEVNO", "DEVNO", &hp_setdev, &hp_showdev, &drd_dev },
+    { MTAB_XTD | MTAB_VDV,             2u, "SC",    "SC",    &hp_set_dib, &hp_show_dib, (void *) &dr_dib },
+    { MTAB_XTD | MTAB_VDV | MTAB_NMO, ~2u, "DEVNO", "DEVNO", &hp_set_dib, &hp_show_dib, (void *) &dr_dib },
     { 0 }
     };
 
@@ -519,7 +528,7 @@ uint16 *bptr = (uint16 *) uptr->filebuf;
 
 if ((uptr->flags & UNIT_ATT) == 0) {
     drc_sta = DRS_ABO;
-    return IOERROR (dr_stopioe, SCPE_UNATT);
+    return SCPE_OK;
     }
 
 trk = CW_GETTRK (drc_cw);
@@ -630,7 +639,7 @@ return SCPE_OK;
 
 /* Attach routine */
 
-t_stat drc_attach (UNIT *uptr, char *cptr)
+t_stat drc_attach (UNIT *uptr, CONST char *cptr)
 {
 int32 sz = sz_tab[DR_GETSZ (uptr->flags)];
 
@@ -641,7 +650,7 @@ return attach_unit (uptr, cptr);
 
 /* Set protected track count */
 
-t_stat dr_set_prot (UNIT *uptr, int32 val, char *cptr, void *desc)
+t_stat dr_set_prot (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 {
 int32 count;
 t_stat status;
@@ -677,7 +686,7 @@ return SCPE_OK;
 
 /* Show protected track count */
 
-t_stat dr_show_prot (FILE *st, UNIT *uptr, int32 val, void *desc)
+t_stat dr_show_prot (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 {
 fprintf (st, "protected tracks=%d", drc_pcount);
 return SCPE_OK;
@@ -685,7 +694,7 @@ return SCPE_OK;
 
 /* Set size routine */
 
-t_stat dr_set_size (UNIT *uptr, int32 val, char *cptr, void *desc)
+t_stat dr_set_size (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 {
 int32 sz;
 int32 szindex;
@@ -702,50 +711,126 @@ else {
 return SCPE_OK;
 }
 
-/* Fixed head disk/drum bootstrap routine (disc subset of disc/paper tape loader) */
 
-#define BOOT_START      060
+/* Basic Binary Disc Loader.
 
-static const BOOT_ROM dr_rom = {                        /* padded to start at x7760 */
-    0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0,
-    0020010,                    /*DMA 20000+DC */
-    0000000,                    /*    0 */
-    0107700,                    /*    CLC 0,C */
-    0063756,                    /*    LDA DMA           ; DMA ctrl */
-    0102606,                    /*    OTA 6 */
-    0002700,                    /*    CLA,CCE */
-    0102611,                    /*    OTA CC            ; trk = sec = 0 */
-    0001500,                    /*    ERA               ; A = 100000 */
-    0102602,                    /*    OTA 2             ; DMA in, addr */
-    0063777,                    /*    LDA M64 */
-    0102702,                    /*    STC 2 */
-    0102602,                    /*    OTA 2             ; DMA wc = -64 */
-    0103706,                    /*    STC 6,C           ; start DMA */
-    0067776,                    /*    LDB JSF           ; get JMP . */
-    0074077,                    /*    STB 77            ; in base page */
-    0102710,                    /*    STC DC            ; start disc */
-    0024077,                    /*JSF JMP 77            ; go wait */
-    0177700                     /*M64 -100 */
+   The Basic Binary Disc Loader (BBDL) contains two programs.  The program
+   starting at address x7700 loads absolute paper tapes into memory.  The
+   program starting at address x7760 loads a disc-resident bootstrap from the
+   277x fixed-head disc/drum.  Entering a BOOT DRC command loads the BBDL into
+   memory and executes the disc portion starting at x7760.  The bootstrap issues
+   a CLC 0,C to clear the disc track and sector address registers and then sets
+   up a 64-word read from track 0 sector 0 to memory locations 0-77 octal.  It
+   then stores a JMP * instruction in location 77, starts the read, and jumps to
+   location 77.  The JMP * causes the CPU to loop until the last word read from
+   the disc overlays location 77 which, typically, would be a JMP instruction to
+   the start of the disc-resident bootstrap.
+
+   In hardware, the BBDL was hand-configured for the disc and paper tape reader
+   select codes when it was installed on a given system.  Under simulation, we
+   treat it as a standard HP 1000 loader, even though it is not structured that
+   way, and so the cpu_ibl mechanism used to load and configure it must be
+   augmented to account for the differences.
+
+
+   Implementaion notes:
+
+    1. The full BBDL is loaded into memory, even though only the disc portion
+       will be used.
+
+    2. For compatibility with the cpu_ibl routine, the loader has been changed
+       from the standard HP version.  The device I/O instructions are modified
+       to address locations 10 and 11.
+*/
+
+static const BOOT_ROM dr_rom = {
+    0107700,                    /* ST2   CLC 0,C           START OF PAPER TAPE LOADER */
+    0002401,                    /*       CLA,RSS         */
+    0063726,                    /* CONT2 LDA CM21        */
+    0006700,                    /*       CLB,CCE         */
+    0017742,                    /*       JSB READ2       */
+    0007306,                    /* LEDR2 CMB,CCE,INB,SZB */
+    0027713,                    /*       JMP RECL2       */
+    0002006,                    /* EOTC2 INA,SZA         */
+    0027703,                    /*       JMP CONT2+1     */
+    0102077,                    /*       HLT 77B         */
+    0027700,                    /*       JMP ST2         */
+    0077754,                    /* RECL2 STB CNT2        */
+    0017742,                    /*       JSB READ2       */
+    0017742,                    /*       JSB READ2       */
+    0074000,                    /*       STB A           */
+    0077757,                    /*       STB ADR11       */
+    0067757,                    /* SUCID LDB ADR11       */
+    0047755,                    /*       ADB MAXAD       */
+    0002040,                    /*       SEZ             */
+    0027740,                    /*       JMP RESCU       */
+    0017742,                    /* LOAD2 JSB READ2       */
+    0040001,                    /*       ADA B           */
+    0177757,                    /* CM21  STB ADR11,I     */
+    0037757,                    /*       ISZ ADR11       */
+    0000040,                    /*       CLE             */
+    0037754,                    /*       ISZ CNT2        */
+    0027720,                    /*       JMP SUCID       */
+    0017742,                    /*       JSB READ2       */
+    0054000,                    /*       CPB A           */
+    0027702,                    /*       JMP CONT2       */
+    0102011,                    /*       HLT 11B         */
+    0027700,                    /*       JMP ST2         */
+    0102055,                    /* RESCU HLT 55B         */
+    0027700,                    /*       JMP ST2         */
+    0000000,                    /* READ2 NOP             */
+    0006600,                    /*       CLB,CME         */
+    0103710,                    /* RED2  STC PR,C        */
+    0102310,                    /*       SFS PR          */
+    0027745,                    /*       JMP *-1         */
+    0107410,                    /*       MIB PR,C        */
+    0002041,                    /*       SEZ,RSS         */
+    0127742,                    /*       JMP READ2,I     */
+    0005767,                    /*       BLF,CLE,BLF     */
+    0027744,                    /*       JMP RED2        */
+    0000000,                    /* CNT2  NOP             */
+    0000000,                    /* MAXAD NOP             */
+    0020000,                    /* CWORD ABS 20000B+DC   */
+    0000000,                    /* ADR11 NOP             */
+
+    0107700,                    /* DLDR  CLC 0,C           START OF FIXED DISC LOADER */
+    0063756,                    /*       LDA CWORD       */
+    0102606,                    /*       OTA 6           */
+    0002700,                    /*       CLA,CCE         */
+    0102611,                    /*       OTA CC          */
+    0001500,                    /*       ERA             */
+    0102602,                    /*       OTA 2           */
+    0063777,                    /*       LDA WRDCT       */
+    0102702,                    /*       STC 2           */
+    0102602,                    /*       OTA 2           */
+    0103706,                    /*       STC 6,C         */
+    0102710,                    /*       STC DC          */
+    0067776,                    /*       LDB JMP77       */
+    0074077,                    /*       STB 77B         */
+    0024077,                    /* JMP77 JMP 77B         */
+    0177700                     /* WRDCT OCT -100        */
     };
+
+#define BBDL_MAX_ADDR       0000055                     /* ROM index of the maximum address word */
+#define BBDL_DMA_CNTL       0000056                     /* ROM index of the DMA control word */
+#define BBDL_DISC_START     0000060                     /* ROM index of the disc loader */
 
 t_stat drc_boot (int32 unitno, DEVICE *dptr)
 {
-const int32 dev = drd_dib.select_code;                  /* data chan select code */
+const HP_WORD dev = (HP_WORD) drd_dib.select_code;      /* data chan select code */
 
 if (unitno != 0)                                        /* boot supported on drive unit 0 only */
     return SCPE_NOFNC;                                  /* report "Command not allowed" if attempted */
 
-if (ibl_copy (dr_rom, dev, IBL_S_NOCLR, IBL_S_NOSET))   /* copy the boot ROM to memory and configure */
-    return SCPE_IERR;                                   /* return an internal error if the copy failed */
+cpu_ibl (dr_rom, dev, IBL_S_NOCLR, IBL_S_NOSET);        /* copy the boot ROM to memory and configure */
 
-WritePW (PC + IBL_DPC, dr_rom [IBL_DPC]);               /* restore overwritten word */
-WritePW (PC + IBL_END, dr_rom [IBL_END]);               /* restore overwritten word */
-PC = PC + BOOT_START;                                   /* correct starting address */
+mem_deposit (PR + BBDL_MAX_ADDR, mem_examine (PR + IBL_END));               /* move the maximum address word */
+mem_deposit (PR + BBDL_DMA_CNTL, (HP_WORD) dr_rom [BBDL_DMA_CNTL] + dev);   /* set up the DMA control word */
+
+mem_deposit (PR + IBL_DPC, (HP_WORD) dr_rom [IBL_DPC]); /* restore the overwritten word */
+mem_deposit (PR + IBL_END, (HP_WORD) dr_rom [IBL_END]); /* restore the overwritten word */
+
+PR = PR + BBDL_DISC_START;                              /* select the starting address */
 
 return SCPE_OK;
 }

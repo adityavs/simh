@@ -163,7 +163,7 @@ switch (op) {                                           /* case on opcode */
         if (src1.sign ^ src2.sign)                      /* signs differ? */
             CC = src1.sign? CC4: CC3;                   /* set < or > */
         else {                                          /* same signs */
-            t = CmpDstr (&src1, &src2);                 /* compare strings */
+            int32 t = CmpDstr (&src1, &src2);           /* compare strings */
             if (t < 0)
                 CC = (src1.sign? CC3: CC4);
             else if (t > 0)
@@ -203,8 +203,10 @@ switch (op) {                                           /* case on opcode */
         dst = Dstr_zero;                                /* clear result */
         kint = 0;                                       /* assume no int */
         if (!QCPU_5X0 &&                                /* S5-9? */
-            (cis_test_int (&src1, &kint)))              /* interrupted? */
-            cis_dm_int (&src1, &dst, kint);             /* restore */
+            (cis_test_int (&src1, &kint))) {            /* interrupted? */
+                src1.sign = 0;
+                cis_dm_int (&src1, &dst, kint);         /* restore */
+                }
         else if ((tr = TestDstrValid (&src1)) != 0)     /* mpyr valid? */ 
              return tr;
         if (LntDstr (&src1) && LntDstr (&src2)) {       /* both opnds != 0? */
@@ -266,9 +268,10 @@ switch (op) {                                           /* case on opcode */
         kint = 0;                                       /* no interrupt */
         if (!QCPU_5X0 &&                                /* S5-9? */
             (cis_test_int (&src1, &t))) {               /* interrupted? */
-            cis_dd_int (&src1, &dst, t, &kint);         /* restore */
-            t = t - 1;
-            }
+                src1.sign = 0;
+                cis_dd_int (&src1, &dst, t, &kint);     /* restore */
+                t = t - 1;
+                }
         else {                                          /* normal start? */
             if ((tr = TestDstrValid (&src1)) != 0)      /* divd valid? */ 
                 return tr;
@@ -717,11 +720,11 @@ return cy;
 void SubDstr (dstr_t *s1, dstr_t *s2, dstr_t *ds)
 {
 uint32 i;
-dstr_t compl;
+dstr_t Compl;
 
 for (i = 0; i < DSTRLNT; i++)                           /* 9's comp s2 */
-    compl.val[i] = 0x99999999 - s1->val[i];
-AddDstr (&compl, s2, ds, 1);                            /* s1 + ~s2 + 1 */
+    Compl.val[i] = 0x99999999 - s1->val[i];
+AddDstr (&Compl, s2, ds, 1);                            /* s1 + ~s2 + 1 */
 return;
 }
 
@@ -838,7 +841,7 @@ uint32 NibbleRshift (dstr_t *dsrc, uint32 sc, uint32 cin)
 int32 i;
 uint32 s, nc;
 
-if (s = sc * 4) {
+if ((s = sc * 4)) {
     for (i = DSTRLNT - 1; (int32) i >= 0; i--) {
         nc = (dsrc->val[i] << (32 - s)) & WMASK;
         dsrc->val[i] = ((dsrc->val[i] >> s) |
@@ -862,7 +865,7 @@ uint32 NibbleLshift (dstr_t *dsrc, uint32 sc, uint32 cin)
 {
 uint32 i, s, nc;
 
-if (s = sc * 4) {
+if ((s = sc * 4)) {
     for (i = 0; i < DSTRLNT; i++) {
         nc = dsrc->val[i] >> (32 - s);
         dsrc->val[i] = ((dsrc->val[i] << s) |
