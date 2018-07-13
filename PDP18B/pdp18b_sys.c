@@ -99,6 +99,9 @@ extern DEVICE mt_dev;
 extern DEVICE tti1_dev, tto1_dev;
 extern UNIT tti1_unit, tto1_unit;
 #endif
+#if defined (GRAPHICS2)
+extern DEVICE g2out_dev, g2in_dev;
+#endif
 #if defined (UC15)
 extern DEVICE dr15_dev;
 #endif
@@ -268,7 +271,7 @@ return SCPE_OK;                                         /* done */
         word to execute (bit 1 of last character set)
 */
 
-t_stat hri_load_7915 (FILE *fileref, const char *cptr)
+t_stat hri_load_7915 (FILE *fileref, CONST char *cptr)
 {
 int32 bits, origin, val;
 char gbuf[CBUFSIZE];

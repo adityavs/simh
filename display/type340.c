@@ -405,7 +405,7 @@ lineTwoStep(int x0, int y0, int x1, int y1)
                 if (d > 0) {
                     lpoint(x0 += stepx, y0);
                     lpoint(x0 += stepx, y0 += stepy);
-                    lpoint(x1 -= stepy, y1);
+                    lpoint(x1 -= stepx, y1);
                     lpoint(x1 -= stepx, y1 -= stepy);
                     d += incr1;
                 } else {
@@ -453,7 +453,7 @@ vector(int i, int sy, int dy, int sx, int dx)
 {
     struct type340 *u = UNIT(0);
     int x0, y0, x1, y1;
-    int flags;
+    int flags = 0;
 
     DEBUGF(("v i%d y%c%d x%c%d\r\n", i,
             (sy ? '-' : '+'), dy,

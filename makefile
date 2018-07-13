@@ -1,6 +1,7 @@
 #
 # This GNU make makefile has been tested on:
 #   Linux (x86 & Sparc & PPC)
+#   Android (Termux)
 #   OS X
 #   Solaris (x86 & Sparc) (gcc and Sun C)
 #   OpenBSD
@@ -37,13 +38,14 @@
 #
 # simh project support is provided for simulators that are built with 
 # dependent packages provided with the or by the operating system 
-# distribution OR for platforms where that isn't directly available (OS X) 
-# by packages from specific package management systems (MacPorts).  Users 
-# wanting to build simulators with locally build dependent packages or 
-# packages provided by an unsupported package management system can 
-# override where this procedure looks for include files and/or libraries.  
-# Overrides can be specified by define exported environment variables or 
-# GNU make command line arguments which specify INCLUDES and/or LIBRARIES.  
+# distribution OR for platforms where that isn't directly available 
+# (OS X) by packages from specific package management systems (MacPorts 
+# or Homebrew).  Users wanting to build simulators with locally build 
+# dependent packages or packages provided by an unsupported package 
+# management system can override where this procedure looks for include 
+# files and/or libraries.  Overrides can be specified by define exported 
+# environment variables or GNU make command line arguments which specify 
+# INCLUDES and/or LIBRARIES.  
 # Each of these, if specified, must be the complete list include directories
 # or library directories that should be used with each element separated by 
 # colons. (i.e. INCLUDES=/usr/include/:/usr/local/include/:...)
@@ -195,17 +197,26 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
     endif
   endif
   ifeq (git-repo,$(shell if $(TEST) -d ./.git; then echo git-repo; fi))
-    ifeq (need-hooks,$(shell if $(TEST) ! -e ./.git/hooks/post-checkout; then echo need-hooks; fi))
+    NEED_HOOKS = $(shell if $(TEST) ! -e ./.git/hooks/post-checkout; then echo need-hooks; fi)
+    ifeq (,$(NEED_HOOKS))
+      NEED_HOOKS = $(shell if ! `diff ./.git/hooks/post-checkout ./Visual\ Studio\ Projects/git-hooks/post-checkout >/dev/null`; then echo need-hooks; fi)
+    endif
+    ifeq (need-hooks,$(NEED_HOOKS))
       $(info *** Installing git hooks in local repository ***)
-      GIT_HOOKS += $(shell /bin/cp './Visual Studio Projects/git-hooks/post-commit' ./.git/hooks/)
-      GIT_HOOKS += $(shell /bin/cp './Visual Studio Projects/git-hooks/post-checkout' ./.git/hooks/)
-      GIT_HOOKS += $(shell /bin/cp './Visual Studio Projects/git-hooks/post-merge' ./.git/hooks/)
+      GIT_HOOKS += $(shell cp './Visual Studio Projects/git-hooks/post-commit' ./.git/hooks/)
+      GIT_HOOKS += $(shell cp './Visual Studio Projects/git-hooks/post-checkout' ./.git/hooks/)
+      GIT_HOOKS += $(shell cp './Visual Studio Projects/git-hooks/post-merge' ./.git/hooks/)
       GIT_HOOKS += $(shell ./.git/hooks/post-checkout)
       ifneq (,$(strip $(GIT_HOOKS)))
         $(info *** Warning - Error installing git hooks *** $(GIT_HOOKS))
+      else
+        ifneq (commit-id-exists,$(shell if $(TEST) -e .git-commit-id; then echo commit-id-exists; fi))
+          $(shell rm .git-commit-id)
+        endif
       endif
-    else
-      ifneq (commit-id-exists,$(shell if $(TEST) -e .git-commit-id; then echo commit-id-exists; fi))
+    endif
+    ifneq (commit-id-exists,$(shell if $(TEST) -e .git-commit-id; then echo commit-id-exists; fi))
+      ifeq (,$(strip $(GIT_HOOKS)))
         GIT_HOOKS = $(shell ./.git/hooks/post-checkout)
         ifneq (,$(strip $(GIT_HOOKS)))
           $(info *** Warning - Error executing git hooks *** $(GIT_HOOKS))
@@ -221,9 +232,12 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
       OS_CCDEFS += -DSIM_ASYNCH_IO 
     endif
     OS_LDFLAGS = -lm
-  else # Non-Android Builds
+  else # Non-Android (or Native Android) Builds
     ifeq (,$(INCLUDES)$(LIBRARIES))
-      INCPATH:=/usr/include
+      INCPATH:=$(shell LANG=C; $(GCC) -x c -v -E /dev/null 2>&1 | grep -A 10 '> search starts here' | grep '^ ' | tr -d '\n')
+      ifeq (,$(INCPATH))
+        INCPATH:=/usr/include
+      endif
       LIBPATH:=/usr/lib
     else
       $(info *** Warning ***)
@@ -275,8 +289,19 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
       endif
     else
       ifeq (Linux,$(OSTYPE))
+        ifeq (Android,$(shell uname -o))
+          OS_CCDEFS += -D__ANDROID_API__=$(shell getprop ro.build.version.sdk) -DSIM_BUILD_OS=" On Android Version $(shell getprop ro.build.version.release)"
+        endif
         ifneq (lib,$(findstring lib,$(UNSUPPORTED_BUILD)))
-          LIBPATH := $(sort $(foreach lib,$(shell /sbin/ldconfig -p | grep ' => /' | sed 's/^.* => //'),$(dir $(lib))))
+          ifeq (Android,$(shell uname -o))
+            ifneq (,$(shell if $(TEST) -d /system/lib; then echo systemlib; fi))
+              LIBPATH += /system/lib
+            endif
+            LIBPATH += $(LD_LIBRARY_PATH)
+          endif
+          ifeq (ldconfig,$(shell if $(TEST) -e /sbin/ldconfig; then echo ldconfig; fi))
+            LIBPATH := $(sort $(foreach lib,$(shell /sbin/ldconfig -p | grep ' => /' | sed 's/^.* => //'),$(dir $(lib))))
+          endif
         endif
         LIBEXT = so
       else
@@ -444,11 +469,11 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
     endif
   endif
   # Find available RegEx library.  Prefer libpcreposix.
-  ifneq (,$(call find_include,pcreposix))
-    ifneq (,$(call find_lib,pcreposix))
+  ifneq (,$(and $(call find_include,pcreposix),$(call find_include,pcre)))
+    ifneq (,$(and $(call find_lib,pcreposix),$(call find_lib,pcre)))
       OS_CCDEFS += -DHAVE_PCREPOSIX_H
-      OS_LDFLAGS += -lpcreposix
-      $(info using libpcreposix: $(call find_lib,pcreposix) $(call find_include,pcreposix))
+      OS_LDFLAGS += -lpcreposix -lpcre
+      $(info using libpcreposix: $(call find_lib,pcreposix) $(call find_lib,pcre) $(call find_include,pcreposix) $(call find_include,pcre))
       ifeq ($(LD_SEARCH_NEEDED),$(call need_search,pcreposix))
         OS_LDFLAGS += -L$(dir $(call find_lib,pcreposix))
       endif
@@ -468,6 +493,18 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
     ifneq (,$(call find_lib,ncurses))
       OS_CURSES_DEFS += -DHAVE_NCURSES -lncurses
     endif
+  endif
+  ifneq (,$(call find_include,semaphore))
+    ifneq (, $(shell grep sem_timedwait $(call find_include,semaphore)))
+      OS_CCDEFS += -DHAVE_SEMAPHORE
+      $(info using semaphore: $(call find_include,semaphore))
+    endif
+  endif
+  ifneq (,$(call find_include,sys/ioctl))
+    OS_CCDEFS += -DHAVE_SYS_IOCTL
+  endif
+  ifneq (,$(call find_include,linux/cdrom))
+    OS_CCDEFS += -DHAVE_LINUX_CDROM
   endif
   ifneq (,$(call find_include,dlfcn))
     ifneq (,$(call find_lib,dl))
@@ -828,15 +865,19 @@ ifeq ($(WIN32),)  #*nix Environments (&& cygwin)
     MKDIRBIN = mkdir -p BIN
   endif
   ifeq (commit-id-exists,$(shell if $(TEST) -e .git-commit-id; then echo commit-id-exists; fi))
-    GIT_COMMIT_ID=$(shell cat .git-commit-id)
+    GIT_COMMIT_ID=$(shell grep 'SIM_GIT_COMMIT_ID' .git-commit-id | awk '{ print $$2 }')
+    GIT_COMMIT_TIME=$(shell grep 'SIM_GIT_COMMIT_TIME' .git-commit-id | awk '{ print $$2 }')
   else
     ifeq (,$(shell grep 'define SIM_GIT_COMMIT_ID' sim_rev.h | grep 'Format:'))
       GIT_COMMIT_ID=$(shell grep 'define SIM_GIT_COMMIT_ID' sim_rev.h | awk '{ print $$3 }')
+      GIT_COMMIT_TIME=$(shell grep 'define SIM_GIT_COMMIT_TIME' sim_rev.h | awk '{ print $$3 }')
     else
       ifeq (git-submodule,$(if $(shell cd .. ; git rev-parse --git-dir 2>/dev/null),git-submodule))
         GIT_COMMIT_ID=$(shell cd .. ; git submodule status | grep "$(notdir $(realpath .))" | awk '{ print $$1 }')
+        GIT_COMMIT_TIME=$(shell git --git-dir=$(realpath .)/.git log $(GIT_COMMIT_ID) -1 --pretty="%aI")
       else
         GIT_COMMIT_ID=undetermined-git-id
+        GIT_COMMIT_TIME=undetermined-commit-time
       endif
     endif
   endif
@@ -921,11 +962,13 @@ else
   ifneq ($(USE_NETWORK),)
     NETWORK_OPT += -DUSE_SHARED
   endif
-  ifneq (,$(shell if exist .git-commit-id type .git-commit-id))
-    GIT_COMMIT_ID=$(shell if exist .git-commit-id type .git-commit-id)
+  ifneq (,$(shell if exist .git-commit-id echo git-commit-id))
+    GIT_COMMIT_ID=$(shell for /F "tokens=2" %%i in ("$(shell findstr /C:"SIM_GIT_COMMIT_ID" .git-commit-id)") do echo %%i)
+    GIT_COMMIT_TIME=$(shell for /F "tokens=2" %%i in ("$(shell findstr /C:"SIM_GIT_COMMIT_TIME" .git-commit-id)") do echo %%i)
   else
     ifeq (,$(shell findstr /C:"define SIM_GIT_COMMIT_ID" sim_rev.h | findstr Format))
       GIT_COMMIT_ID=$(shell for /F "tokens=3" %%i in ("$(shell findstr /C:"define SIM_GIT_COMMIT_ID" sim_rev.h)") do echo %%i)
+      GIT_COMMIT_TIME=$(shell for /F "tokens=3" %%i in ("$(shell findstr /C:"define SIM_GIT_COMMIT_TIME" sim_rev.h)") do echo %%i)
     endif
   endif
   ifneq (windows-build,$(shell if exist ..\windows-build\README.md echo windows-build))
@@ -979,6 +1022,9 @@ else
 endif # Win32 (via MinGW)
 ifneq (,$(GIT_COMMIT_ID))
   CFLAGS_GIT = -DSIM_GIT_COMMIT_ID=$(GIT_COMMIT_ID)
+endif
+ifneq (,$(GIT_COMMIT_TIME))
+  CFLAGS_GIT += -DSIM_GIT_COMMIT_TIME=$(GIT_COMMIT_TIME)
 endif
 ifneq (,$(UNSUPPORTED_BUILD))
   CFLAGS_GIT += -DSIM_BUILD=Unsupported=$(UNSUPPORTED_BUILD)
@@ -1063,6 +1109,7 @@ ifneq (clean,$(MAKECMDGOALS))
   ifneq (,$(GIT_COMMIT_ID))
     $(info ***)
     $(info *** git commit id is $(GIT_COMMIT_ID).)
+    $(info *** git commit time is $(GIT_COMMIT_TIME).)
   endif
   $(info ***)
 endif
@@ -1122,7 +1169,7 @@ PDP18B = ${PDP18BD}/pdp18b_dt.c ${PDP18BD}/pdp18b_drm.c ${PDP18BD}/pdp18b_cpu.c 
 	${PDP18BD}/pdp18b_lp.c ${PDP18BD}/pdp18b_mt.c ${PDP18BD}/pdp18b_rf.c \
 	${PDP18BD}/pdp18b_rp.c ${PDP18BD}/pdp18b_stddev.c ${PDP18BD}/pdp18b_sys.c \
 	${PDP18BD}/pdp18b_rb.c ${PDP18BD}/pdp18b_tt1.c ${PDP18BD}/pdp18b_fpp.c \
-	${PDP18BD}/pdp18b_g2tty.c
+	${PDP18BD}/pdp18b_g2tty.c ${PDP18BD}/pdp18b_dr15.c
 
 PDP4_OPT = -DPDP4 -I ${PDP18BD}
 PDP7_OPT = -DPDP7 -I ${PDP18BD}
@@ -1146,6 +1193,17 @@ PDP11 = ${PDP11D}/pdp11_fp.c ${PDP11D}/pdp11_cpu.c ${PDP11D}/pdp11_dz.c \
 	${PDP11D}/pdp11_kmc.c ${PDP11D}/pdp11_dup.c ${PDP11D}/pdp11_rs.c \
 	${PDP11D}/pdp11_vt.c ${PDP11D}/pdp11_td.c ${PDP11D}/pdp11_io_lib.c $(DISPLAYL) $(DISPLAYVT)
 PDP11_OPT = -DVM_PDP11 -I ${PDP11D} ${NETWORK_OPT} $(DISPLAY_OPT)
+
+
+UC15D = PDP11
+UC15 = ${UC15D}/pdp11_cis.c ${UC15D}/pdp11_cpu.c \
+	${UC15D}/pdp11_cpumod.c ${UC15D}/pdp11_cr.c \
+	${UC15D}/pdp11_fp.c ${UC15D}/pdp11_io.c \
+	${UC15D}/pdp11_io_lib.c ${UC15D}/pdp11_lp.c \
+	${UC15D}/pdp11_rh.c ${UC15D}/pdp11_rk.c \
+	${UC15D}/pdp11_stddev.c ${UC15D}/pdp11_sys.c \
+	${UC15D}/pdp11_uc15.c
+UC15_OPT = -DVM_PDP11 -DUC15 -I ${UC15D} -I ${PDP18BD}
 
 
 VAXD = VAX
@@ -1367,6 +1425,12 @@ I7094 = ${I7094D}/i7094_cpu.c ${I7094D}/i7094_cpu1.c ${I7094D}/i7094_io.c \
 	${I7094D}/i7094_drm.c ${I7094D}/i7094_dsk.c ${I7094D}/i7094_sys.c \
 	${I7094D}/i7094_lp.c ${I7094D}/i7094_mt.c ${I7094D}/i7094_binloader.c
 I7094_OPT = -DUSE_INT64 -I ${I7094D}
+
+
+I650D = I650
+I650 = ${I650D}/i650_cpu.c ${I650D}/i650_cdr.c ${I650D}/i650_cdp.c \
+	${I650D}/i650_sys.c
+I650_OPT = -I ${I650D} -DUSE_INT64 -DUSE_SIM_CARD
 
 
 IBM1130D = Ibm1130
@@ -1596,6 +1660,31 @@ ifneq (,$(BESM6_BUILD))
     ifeq (,$(and ${VIDEO_LDFLAGS}, ${FONTFILE}, $(BESM6_BUILD)))
         $(info *** No SDL ttf support available.  BESM-6 video panel disabled.)
         $(info ***)
+        ifeq (Darwin,$(OSTYPE))
+          $(info *** Info *** Install the MacPorts libSDL2-ttf development package to provide this)
+          $(info *** Info *** functionality for your OS X system:)
+          $(info *** Info ***       # port install libsdl2-ttf-dev)
+          ifeq (/usr/local/bin/brew,$(shell which brew))
+            $(info *** Info ***)
+            $(info *** Info *** OR)
+            $(info *** Info ***)
+            $(info *** Info *** Install the HomeBrew sdl2_ttf package to provide this)
+            $(info *** Info *** functionality for your OS X system:)
+            $(info *** Info ***       $$ brew install sdl2_ttf)
+          endif
+        else
+          ifneq (,$(and $(findstring Linux,$(OSTYPE)),$(call find_exe,apt-get)))
+            $(info *** Info *** Install the development components of libSDL-ttf or libSDL2-ttf)
+            $(info *** Info *** packaged for your Linux operating system distribution:)
+            $(info *** Info ***        $$ sudo apt-get install libsdl2-ttf-dev)
+            $(info *** Info ***    or)
+            $(info *** Info ***        $$ sudo apt-get install libsdl-ttf-dev)
+          else
+            $(info *** Info *** Install the development components of libSDL-ttf packaged by your)
+            $(info *** Info *** operating system distribution and rebuild your simulator to)
+            $(info *** Info *** enable this extra functionality.)
+          endif
+        endif
         BESM6_OPT = -I ${BESM6D} -DUSE_INT64 
     else ifneq (,$(and $(findstring sdl2,${VIDEO_LDFLAGS}),$(call find_include,SDL2/SDL_ttf),$(call find_lib,SDL2_ttf)))
         $(info using libSDL2_ttf: $(call find_lib,SDL2_ttf) $(call find_include,SDL2/SDL_ttf))
@@ -1663,6 +1752,7 @@ ATT3B2 = ${ATT3B2D}/3b2_cpu.c ${ATT3B2D}/3b2_mmu.c \
 	${ATT3B2D}/3b2_iu.c ${ATT3B2D}/3b2_if.c \
 	${ATT3B2D}/3b2_id.c ${ATT3B2D}/3b2_dmac.c \
 	${ATT3B2D}/3b2_sys.c ${ATT3B2D}/3b2_io.c \
+	${ATT3B2D}/3b2_ports.c ${ATT3B2D}/3b2_ctc.c \
 	${ATT3B2D}/3b2_sysdev.c
 ATT3B2_OPT = -I ${ATT3B2D} -DUSE_INT64 -DUSE_ADDR64
 #
@@ -1673,7 +1763,8 @@ ALL = pdp1 pdp4 pdp7 pdp8 pdp9 pdp15 pdp11 pdp10 \
 	nova eclipse hp2100 hp3000 i1401 i1620 s3 altair altairz80 gri \
 	i7094 ibm1130 id16 id32 sds lgp h316 cdc1700 \
 	swtp6800mp-a swtp6800mp-a2 tx-0 ssem b5500 isys8010 isys8020 \
-	isys8030 isys8024 imds-225 scelbi 3b2 i701 i704 i7010 i7070 i7080 i7090
+	isys8030 isys8024 imds-225 scelbi 3b2 i701 i704 i7010 i7070 i7080 i7090 \
+	i650 sigma uc15
 
 all : ${ALL}
 
@@ -1757,6 +1848,12 @@ pdp11 : ${BIN}BuildROMs${EXE} ${BIN}pdp11${EXE}
 ${BIN}pdp11${EXE} : ${PDP11} ${SIM}
 	${MKDIRBIN}
 	${CC} ${PDP11} ${SIM} ${PDP11_OPT} $(CC_OUTSPEC) ${LDFLAGS}
+
+uc15 : ${BIN}uc15${EXE}
+
+${BIN}uc15${EXE} : ${UC15} ${SIM}
+	${MKDIRBIN}
+	${CC} ${UC15} ${SIM} ${UC15_OPT} $(CC_OUTSPEC) ${LDFLAGS}
 
 vax : microvax3900
 
@@ -2051,7 +2148,7 @@ ${BIN}b5500${EXE} : ${B5500} ${SIM}
 	${MKDIRBIN}
 	${CC} ${B5500} ${SIM} ${B5500_OPT} $(CC_OUTSPEC) ${LDFLAGS}
 
-3b2 : $(BIN)3b2$(EXE)
+3b2 : ${BIN}BuildROMs${EXE} $(BIN)3b2$(EXE)
  
 ${BIN}3b2${EXE} : ${ATT3B2} ${SIM} ${BUILD_ROMS}
 	${MKDIRBIN}
@@ -2092,6 +2189,12 @@ i701 : $(BIN)i701$(EXE)
 ${BIN}i701${EXE} : ${I701} ${SIM} 
 	${MKDIRBIN}
 	${CC} ${I701} ${SIM} ${I701_OPT} $(CC_OUTSPEC) ${LDFLAGS}
+
+i650 : $(BIN)i650$(EXE)
+
+${BIN}i650${EXE} : ${I650} ${SIM} 
+	${MKDIRBIN}
+	${CC} ${I650} ${SIM} ${I650_OPT} $(CC_OUTSPEC) ${LDFLAGS}
 
 # Front Panel API Demo/Test program
 

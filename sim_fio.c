@@ -198,7 +198,7 @@ t_offset pos, sz;
 if (fp == NULL)
     return 0;
 pos = sim_ftell (fp);
-sim_fseek (fp, 0, SEEK_END);
+sim_fseeko (fp, 0, SEEK_END);
 sz = sim_ftell (fp);
 sim_fseeko (fp, pos, SEEK_SET);
 return sz;
@@ -390,7 +390,7 @@ dwStatus = FormatMessageA (FORMAT_MESSAGE_FROM_SYSTEM|
                            sizeof (szMsgBuffer) -1,           //  __in      DWORD nSize,
                            NULL);                             //  __in_opt  va_list *Arguments
 if (0 == dwStatus)
-    snprintf(szMsgBuffer, sizeof(szMsgBuffer) - 1, "Error Code: 0x%lX", Error);
+    snprintf(szMsgBuffer, sizeof(szMsgBuffer) - 1, "Error Code: 0x%X", Error);
 while (sim_isspace (szMsgBuffer[strlen (szMsgBuffer)-1]))
     szMsgBuffer[strlen (szMsgBuffer) - 1] = '\0';
 return szMsgBuffer;
@@ -456,6 +456,16 @@ if (shmem->shm_base != NULL)
 if (shmem->hMapping != INVALID_HANDLE_VALUE)
     CloseHandle (shmem->hMapping);
 free (shmem);
+}
+
+int32 sim_shmem_atomic_add (int32 *p, int32 v)
+{
+return InterlockedExchangeAdd ((volatile long *) p,v) + (v);
+}
+
+t_bool sim_shmem_atomic_cas (int32 *ptr, int32 oldv, int32 newv)
+{
+return (InterlockedCompareExchange ((LONG volatile *) ptr, newv, oldv) == oldv);
 }
 
 #else /* !defined(_WIN32) */
@@ -537,6 +547,7 @@ if ((stbuf.st_mode & S_IFIFO)) {
 return -1;
 }
 
+#if defined (__linux__) || defined (__APPLE__)
 #include <sys/mman.h>
 
 struct SHMEM {
@@ -604,7 +615,52 @@ if (shmem->shm_fd != -1)
 free (shmem);
 }
 
+int32 sim_shmem_atomic_add (int32 *p, int32 v)
+{
+#if defined (HAVE_GCC_SYNC_BUILTINS)
+return __sync_add_and_fetch((int *) p, v);
+#else
+return *p + v;
 #endif
+}
+
+t_bool sim_shmem_atomic_cas (int32 *ptr, int32 oldv, int32 newv)
+{
+#if defined (HAVE_GCC_SYNC_BUILTINS)
+return __sync_bool_compare_and_swap (ptr, oldv, newv);
+#else
+if (*ptr == oldv) {
+    *ptr = newv;
+    return 1;
+    }
+else
+    return 0;
+#endif
+}
+
+#else /* !(defined (__linux__) || defined (__APPLE__)) */
+
+t_stat sim_shmem_open (const char *name, size_t size, SHMEM **shmem, void **addr)
+{
+return SCPE_NOFNC;
+}
+
+void sim_shmem_close (SHMEM *shmem)
+{
+}
+
+int32 sim_shmem_atomic_add (int32 *p, int32 v)
+{
+return -1;
+}
+
+t_bool sim_shmem_atomic_cas (int32 *ptr, int32 oldv, int32 newv)
+{
+return FALSE;
+}
+
+#endif /* defined (__linux__) || defined (__APPLE__) */
+#endif /* defined (_WIN32) */
 
 #if defined(__VAX)
 /* 

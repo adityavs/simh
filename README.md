@@ -1,7 +1,10 @@
-# SIMH v4.0 - Beta                   [![Coverity Scan Build Status](https://scan.coverity.com/projects/11982/badge.svg)](https://scan.coverity.com/projects/simh)
+# SIMH v4.0 - Current
+
+[![Coverity Scan Build Status](https://scan.coverity.com/projects/11982/badge.svg)](https://scan.coverity.com/projects/simh)
+[![Build Status](https://travis-ci.org/simh/simh.svg)](https://travis-ci.org/simh/simh)
 
 ## Table of Contents:
-[WHAT'S NEW](#whats-new)  
+[WHAT'S NEW since simh v3.9](#whats-new-since-simh-v39)  
 . . [New Simulators](#new-simulators)  
 . . [Simulator Front Panel API](#simulator-front-panel-api)  
 . . [New Functionality](#new-functionality)  
@@ -39,7 +42,7 @@
 . . . . . . [VMS](#vms)  
 . . [Problem Reports](#problem-reports)  
 
-## WHAT'S NEW
+## WHAT'S NEW since simh v3.9
 
 ### New Simulators
 
@@ -70,7 +73,7 @@
 
 #### Updated HP2100 simulator from Dave Bryan.
 
-#### Beta Sigma 5, 6 & 7 simulator from Bob Supnik
+#### Sigma 5, 6 & 7 simulator from Bob Supnik
 
 #### Beta SAGE-II and PDQ-3 simulators from Holger Veit
 
@@ -79,6 +82,8 @@
 #### CDC 1700 simulator from John Forecast
 
 #### Hans-Åke Lund has implemented an SCELBI (SCientic-ELectronics-BIology) simulator.
+
+#### Roberto Sancho has implemented an IBM 650 simulator.
 
 ### New Host Platform support - HP-UX and AIX
 
@@ -323,6 +328,7 @@ Device simulator authors can easily schedule their device polling activities to 
     SCREENSHOT filename.bmp          Save video window to the specified file
     SET ENV Name=Value               Set Environment variable
     SET ENV -p "Prompt" Name=Default Gather User input into an Environment Variable
+    SET ENV -a Name=Expression       Evaluate an expression and store result in an Environment Variable
     SET ASYNCH                       Enable Asynchronous I/O
     SET NOASYNCH                     Disable Asynchronous I/O
     SET VERIFY                       Enable command display while processing DO command files
@@ -353,6 +359,7 @@ Device simulator authors can easily schedule their device polling activities to 
     NOOP                             A no-op command
     ON                               Establish or cancel an ON condition dispatch
     IF                               Test some simulator state and conditionally execute commands
+    IF (C-style-expression)          Test some simulator state and conditionally execute commands
     CD                               Change working directory
     SET DEFAULT                      Change working directory
     PWD                              Show working directory
@@ -533,7 +540,7 @@ package must be available while building your simulator.  The simh-vms-pcap.zip
 file can be downloaded from https://github.com/simh/simh/archive/vms-pcap.zip   
 This link will return a file called simh-vms-pcap.zip which should be unpacked as follows:
 
-    $ unzip -aa simh-vms-pcap.zip
+    $ unzip -a simh-vms-pcap.zip
     $ rename [.simh-vms-pcap]pcap-vms.dir []
 
 The PCAP-VMS components are presumed (by the descript.mms file) to be 

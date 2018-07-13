@@ -1258,7 +1258,7 @@ t_stat xq_process_rbdl(CTLR* xq)
             xq->var->rbdl_buf[4] |= XQ_RST_ESETUP;/* loopback flag */
         break;
       case ETH_ITM_NORMAL: /* normal packet */
-        rbl -= 60;    /* keeps max packet size in 11 bits */
+        rbl = item->packet.len - 60;           /* keeps max packet size in 11 bits */
         xq->var->rbdl_buf[4] = (rbl & 0x0700); /* high bits of rbl */
         xq->var->rbdl_buf[4] |= 0x00f8;        /* set reserved bits to 1 */
         break;
@@ -2554,7 +2554,19 @@ t_stat xq_reset(DEVICE* dptr)
 
   /* One time only initializations */
   if (!xq->var->initialized) {
+    char uname[16];
+
     xq->var->initialized = TRUE;
+    sprintf (uname, "%s-SVC", dptr->name);
+    sim_set_uname (&dptr->units[0], uname);
+    sprintf (uname, "%s-TMRSVC", dptr->name);
+    sim_set_uname (&dptr->units[1], uname);
+    sprintf (uname, "%s-STARTSVC", dptr->name);
+    sim_set_uname (&dptr->units[2], uname);
+    sprintf (uname, "%s-RCVSVC", dptr->name);
+    sim_set_uname (&dptr->units[3], uname);
+    sprintf (uname, "%s-SRQRSVC", dptr->name);
+    sim_set_uname (&dptr->units[4], uname);
     /* Set an initial MAC address in the DEC range */
     xq_setmac (dptr->units, 0, "08:00:2B:00:00:00/24", NULL);
     }
