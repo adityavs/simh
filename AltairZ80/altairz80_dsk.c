@@ -131,7 +131,6 @@
 */
 
 #include "altairz80_defs.h"
-#include <assert.h>
 
 /* Debug flags */
 #define IN_MSG              (1 << 0)
@@ -188,7 +187,7 @@ static int32 sectors_per_track [NUM_OF_DSK] = { DSK_SECT, DSK_SECT, DSK_SECT, DS
                                                 DSK_SECT, DSK_SECT, DSK_SECT, DSK_SECT,
                                                 DSK_SECT, DSK_SECT, DSK_SECT, DSK_SECT,
                                                 DSK_SECT, DSK_SECT, DSK_SECT, DSK_SECT };
-static uint8 tracks         [NUM_OF_DSK]    = { MAX_TRACKS, MAX_TRACKS, MAX_TRACKS, MAX_TRACKS,
+static int32 tracks         [NUM_OF_DSK]    = { MAX_TRACKS, MAX_TRACKS, MAX_TRACKS, MAX_TRACKS,
                                                 MAX_TRACKS, MAX_TRACKS, MAX_TRACKS, MAX_TRACKS,
                                                 MAX_TRACKS, MAX_TRACKS, MAX_TRACKS, MAX_TRACKS,
                                                 MAX_TRACKS, MAX_TRACKS, MAX_TRACKS, MAX_TRACKS };
@@ -299,17 +298,17 @@ static UNIT dsk_unit[] = {
 static REG dsk_reg[] = {
     { DRDATAD (DISK,         current_disk,      4,
                "Selected disk register"),                                                   },
-    { BRDATAD (CURTRACK,    current_track,      10, 32, NUM_OF_DSK,
+    { BRDATAD (CURTRACK,     current_track,     10, 32, NUM_OF_DSK,
                "Selected track register array"), REG_CIRC + REG_RO                          },
-    { BRDATAD (CURSECTOR,   current_sector,     10, 32, NUM_OF_DSK,
+    { BRDATAD (CURSECTOR,    current_sector,    10, 32, NUM_OF_DSK,
                "Selected sector register array"), REG_CIRC + REG_RO                         },
-    { BRDATAD (CURBYTE, current_byte,           10, 32, NUM_OF_DSK,
-               "Current byte register arrayr"), REG_CIRC + REG_RO                           },
-    { BRDATAD (CURFLAG, current_flag,           10, 32, NUM_OF_DSK,
+    { BRDATAD (CURBYTE,      current_byte,      10, 32, NUM_OF_DSK,
+               "Current byte register array"), REG_CIRC + REG_RO                            },
+    { BRDATAD (CURFLAG,      current_flag,      10, 32, NUM_OF_DSK,
                "Current flag register array"), REG_CIRC + REG_RO                            },
-    { BRDATAD (TRACKS,      tracks,             10, 8,  NUM_OF_DSK,
-               "Number of tracks register array"),    REG_CIRC                              },
-    { BRDATAD (SECTPERTRACK,sectors_per_track,  10, 8,  NUM_OF_DSK,
+    { BRDATAD (TRACKS,      tracks,             10, 32,  NUM_OF_DSK,
+               "Number of tracks register array"), REG_CIRC                                 },
+    { BRDATAD (SECTPERTRACK, sectors_per_track, 10, 32,  NUM_OF_DSK,
                "Number of sectors per track register array"), REG_CIRC                      },
     { DRDATAD (IN9COUNT,     in9_count,         4,
                "Count of IN(9) register"),  REG_RO                                          },
@@ -329,7 +328,7 @@ static REG dsk_reg[] = {
                "Count of IN/OUT(9) on unattached disk register"), REG_RO                    },
     { DRDATAD (WARNDSK12,    warnDSK12,         4,
                "Count of IN/OUT(10) on unattached disk register"), REG_RO                   },
-    { BRDATAD (DISKBUFFER,   dskbuf,            10, 8,  DSK_SECTSIZE,
+    { BRDATAD (DISKBUFFER,   dskbuf,           10, 8,  DSK_SECTSIZE,
                "Disk data buffer array"), REG_CIRC + REG_RO                                 },
     { NULL }
 };
@@ -406,9 +405,9 @@ static t_stat dsk_attach(UNIT *uptr, CONST char *cptr) {
     if (r != SCPE_OK)                                   /* error?       */
         return r;
 
-    assert(uptr != NULL);
+    ASSURE(uptr != NULL);
     thisUnitIndex = find_unit_index(uptr);
-    assert((0 <= thisUnitIndex) && (thisUnitIndex < NUM_OF_DSK));
+    ASSURE((0 <= thisUnitIndex) && (thisUnitIndex < NUM_OF_DSK));
 
     /*  If the file size is close to the mini-disk image size, set the number of
      tracks to 16, otherwise, 32 sectors per track. */
@@ -423,7 +422,7 @@ static t_stat dsk_attach(UNIT *uptr, CONST char *cptr) {
 void install_ALTAIRbootROM(void) {
     const t_bool result = (install_bootrom(bootrom_dsk, BOOTROM_SIZE_DSK, ALTAIR_ROM_LOW, TRUE) ==
                            SCPE_OK);
-    assert(result);
+    ASSURE(result);
 }
 
 /*  The boot routine modifies the boot ROM in such a way that subsequently
@@ -434,7 +433,7 @@ static t_stat dsk_boot(int32 unitno, DEVICE *dptr) {
         if (sectors_per_track[unitno] == MINI_DISK_SECT) {
             const t_bool result = (install_bootrom(alt_bootrom_dsk, BOOTROM_SIZE_DSK,
                                                    ALTAIR_ROM_LOW, TRUE) == SCPE_OK);
-            assert(result);
+            ASSURE(result);
         } else {
         /* check whether we are really modifying an LD A,<> instruction */
             if ((bootrom_dsk[UNIT_NO_OFFSET_1 - 1] == LDA_INSTRUCTION) &&

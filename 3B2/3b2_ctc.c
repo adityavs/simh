@@ -28,10 +28,8 @@
    from the author.
 */
 
+#include "3b2_defs.h"
 #include "3b2_ctc.h"
-
-extern CIO_STATE cio[CIO_SLOTS];
-extern UNIT cio_unit;
 
 #define CTQRESIZE     20
 #define CTQCESIZE     16
@@ -50,6 +48,9 @@ extern UNIT cio_unit;
 #define DELAY_UNK     1000
 #define DELAY_CATCHUP 10000
 
+#define CTC_DIAG_CRC1 0xa4a5752f
+#define CTC_DIAG_CRC2 0xd3d20eb3
+
 #define TAPE_DEV      0    /* CTAPE device */
 #define XMF_DEV       1    /* XM Floppy device */
 
@@ -58,9 +59,15 @@ extern UNIT cio_unit;
 #define ATOW(arr,i)  ((uint32)arr[i+3] + ((uint32)arr[i+2] << 8) +      \
                       ((uint32)arr[i+1] << 16) + ((uint32)arr[i] << 24))
 
+/* Static function declarations */
+static t_stat ctc_show_cqueue(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+static t_stat ctc_show_rqueue(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+static t_stat ctc_show_queue_common(FILE *st, UNIT *uptr, int32 val, CONST void *desc, t_bool rq);
+
 static uint8   int_cid;             /* Interrupting card ID   */
 static uint8   int_subdev;          /* Interrupting subdevice */
 static t_bool  ctc_conf = FALSE;    /* Has a CTC card been configured? */
+static uint32  ctc_crc;             /* CRC32 of downloaded memory */
 
 struct partition vtoc_table[VTOC_PART] = {
     { 2, 0, 5272,  8928  },   /* 00 */
@@ -253,12 +260,13 @@ static void ctc_cmd(uint8 cid,
                     cio_entry *cqe, uint8 *capp_data)
 {
     uint32 vtoc_addr, pdinfo_addr, ctjob_addr;
-    uint32 maxpass, blkno, delay;
-    uint8  dev;
-    uint8  sec_buf[512];
-    int32  b, j;
+    uint32 maxpass, blkno, delay, last_byte;
+    uint8  dev, c;
+    uint8  sec_buf[VTOC_SECSZ];
+    int32  b, i, j;
+    int32 block_count, read_bytes, remainder, dest;
     t_seccnt secrw = 0;
-    struct vtoc vtoc = {0};
+    struct vtoc vtoc = {{0}};
     struct pdinfo pdinfo = {0};
     t_stat result;
 
@@ -271,11 +279,14 @@ static void ctc_cmd(uint8 cid,
 
     switch(rqe->opcode) {
     case CIO_DLM:
+        for (i = 0; i < rqe->byte_count; i++) {
+            ctc_crc = cio_crc32_shift(ctc_crc, pread_b(rqe->address + i));
+        }
         sim_debug(TRACE_DBG, &ctc_dev,
                   "[ctc_cmd] CIO Download Memory: bytecnt=%04x "
-                  "addr=%08x return_addr=%08x subdev=%02x\n",
+                  "addr=%08x return_addr=%08x subdev=%02x (CRC=%08x)\n",
                   rqe->byte_count, rqe->address,
-                  rqe->address, rqe->subdevice);
+                  rqe->address, rqe->subdevice, ctc_crc);
         delay = DELAY_DLM;
         cqe->address = rqe->address + rqe->byte_count;
         cqe->opcode = CTC_SUCCESS;
@@ -288,18 +299,20 @@ static void ctc_cmd(uint8 cid,
         break;
     case CIO_FCF:
         sim_debug(TRACE_DBG, &ctc_dev,
-                  "[ctc_cmd] CIO Force Function Call: return opcode 0\n");
+                  "[ctc_cmd] CIO Force Function Call (CRC=%08x)\n", ctc_crc);
         delay = DELAY_FCF;
 
-        /* This is to pass diagnostics. TODO: Figure out how to parse
-         * the given test x86 code and determine how to respond
-         * correctly */
-        pwrite_h(0x200f000, 0x1);   /* Test success */
-        pwrite_h(0x200f002, 0x0);   /* Test Number */
-        pwrite_h(0x200f004, 0x0);   /* Actual */
-        pwrite_h(0x200f006, 0x0);   /* Expected */
-        pwrite_b(0x200f008, 0x1);   /* Success flag again */
-        pwrite_b(0x200f009, 0x30);  /* ??? */
+        /* If the currently running program is a diagnostic program,
+         * we are expected to write results into memory at address
+         * 0x200f000 */
+        if (ctc_crc == CTC_DIAG_CRC1 ||
+            ctc_crc == CTC_DIAG_CRC2) {
+            pwrite_h(0x200f000, 0x1);   /* Test success */
+            pwrite_h(0x200f002, 0x0);   /* Test Number */
+            pwrite_h(0x200f004, 0x0);   /* Actual */
+            pwrite_h(0x200f006, 0x0);   /* Expected */
+            pwrite_b(0x200f008, 0x1);   /* Success flag again */
+        }
 
         /* An interesting (?) side-effect of FORCE FUNCTION CALL is
          * that it resets the card state such that a new SYSGEN is
@@ -321,9 +334,10 @@ static void ctc_cmd(uint8 cid,
                   "[ctc_cmd] CTC_DSD (%d)\n",
                   rqe->opcode);
         delay = DELAY_DSD;
-        /* The system wants us to write sub-device structures at the
-         * supplied address, but we have nothing to write. */
-        pwrite_h(rqe->address, 0x0);
+        /* Write subdevice information to the host. */
+        pwrite_h(rqe->address, CTC_NUM_SD);
+        pwrite_h(rqe->address + 2, CTC_SD_FT25);
+        pwrite_h(rqe->address + 4, CTC_SD_FD5);
         cqe->opcode = CTC_SUCCESS;
         break;
     case CTC_FORMAT:
@@ -403,6 +417,7 @@ static void ctc_cmd(uint8 cid,
         delay = DELAY_OPEN;
 
         ctc_state[dev].time = 0;  /* Opening always resets session time to 0 */
+        ctc_state[dev].bytnum = 0;
 
         vtoc_addr = rqe->address;
         pdinfo_addr = ATOW(rapp_data, 4);
@@ -480,11 +495,11 @@ static void ctc_cmd(uint8 cid,
 
         blkno = ATOW(rapp_data, 0);
 
-        for (b = 0; b < rqe->byte_count / 512; b++) {
+        for (b = 0; b < rqe->byte_count / VTOC_SECSZ; b++) {
             ctc_state[dev].time += 10;
-            for (j = 0; j < 512; j++) {
+            for (j = 0; j < VTOC_SECSZ; j++) {
                 /* Fill the buffer */
-                sec_buf[j] = pread_b(rqe->address + (b * 512) + j);
+                sec_buf[j] = pread_b(rqe->address + (b * VTOC_SECSZ) + j);
             }
             lba = blkno + b;
             result = sim_disk_wrsect(&ctc_unit, lba, sec_buf, &secrw, 1);
@@ -508,6 +523,7 @@ static void ctc_cmd(uint8 cid,
         cqe->byte_count = rqe->byte_count;
         cqe->subdevice = rqe->subdevice;
         cqe->address = ATOW(rapp_data, 4);
+        dest = rqe->address;
 
         if (dev == XMF_DEV) {
             cqe->opcode = CTC_NOTREADY;
@@ -519,19 +535,70 @@ static void ctc_cmd(uint8 cid,
             break;
         }
 
+        /*
+         * This read routine supports both streaming and block
+         * oriented modes.
+         *
+         * Read requests from the host give a block number, and a
+         * number of bytes to read. In streaming mode, however, there
+         * is no requirement that the number of bytes to read has to
+         * be block-aligned, so we must support reading an arbitrary
+         * number of bytes from the tape stream and remembering the
+         * current position in the byte stream.
+         *
+         */
+
+        /* The block number to begin reading from is supplied in the
+         * request queue entry's APP_DATA field. */
         blkno = ATOW(rapp_data, 0);
 
-        for (b = 0; b < rqe->byte_count / 512; b++) {
+        /* Since we may start reading from the data stream at an
+         * arbitrary location, we compute the offset of the last byte
+         * to be read, and use that to figure out how many bytes will
+         * be left over to read from an "extra" block */
+        last_byte = ctc_state[dev].bytnum + rqe->byte_count;
+        remainder = last_byte % VTOC_SECSZ;
+
+        /* The number of blocks we have to read in total is computed
+         * by looking at the byte count, PLUS any remainder that will
+         * be left after crossing a block boundary */
+        block_count = rqe->byte_count / VTOC_SECSZ;
+        if (((rqe->byte_count % VTOC_SECSZ) > 0 || remainder > 0)) {
+            block_count++;
+        }
+
+        /* Now step over each block, and start reading from the
+         * necessary location. */
+        for (b = 0; b < block_count; b++) {
+            uint32 start_byte;
+            /* Add some read time to the read time counter */
             ctc_state[dev].time += 10;
+            start_byte = ctc_state[dev].bytnum % VTOC_SECSZ;
             lba = blkno + b;
             result = sim_disk_rdsect(&ctc_unit, lba, sec_buf, &secrw, 1);
             if (result == SCPE_OK) {
-                sim_debug(TRACE_DBG, &ctc_dev,
-                          "[ctc_cmd] ... CTC_READ: 512 bytes from block %d (0x%x)\n",
-                          lba, lba);
-                for (j = 0; j < 512; j++) {
+                /* If this is the last "extra" block, we will only
+                 * read the remainder of bytes from it. Otherwise, we
+                 * need to consume the whole block. */
+                if (b == (block_count - 1) && remainder > 0) {
+                    read_bytes = remainder;
+                } else {
+                    read_bytes = VTOC_SECSZ - start_byte;
+                }
+                for (j = 0; j < read_bytes; j++) {
+                    uint32 offset;
                     /* Drain the buffer */
-                    pwrite_b(rqe->address + (b * 512) + j, sec_buf[j]);
+                    if (b == 0 && (j + start_byte) < VTOC_SECSZ) {
+                        /* This is a partial read of the first block,
+                         * continuing to read from a previous partial
+                         * block read. */
+                        offset = j + start_byte;
+                    } else {
+                        offset = j;
+                    }
+                    c = sec_buf[offset];
+                    pwrite_b(dest++, c);
+                    ctc_state[dev].bytnum++;
                 }
             } else {
                 sim_debug(TRACE_DBG, &ctc_dev,
@@ -570,6 +637,8 @@ void ctc_sysgen(uint8 cid)
 {
     cio_entry cqe = {0};
     uint8 rapp_data[12] = {0};
+
+    ctc_crc = 0;
 
     sim_debug(TRACE_DBG, &ctc_dev, "[ctc_sysgen] Handling Sysgen.\n");
     sim_debug(TRACE_DBG, &ctc_dev, "[ctc_sysgen]    rqp=%08x\n", cio[cid].rqp);
@@ -623,6 +692,8 @@ void ctc_full(uint8 cid)
 t_stat ctc_reset(DEVICE *dptr)
 {
     uint8 cid;
+
+    ctc_crc = 0;
 
     sim_debug(TRACE_DBG, &ctc_dev,
               "[ctc_reset] Resetting CTC device\n");
@@ -710,7 +781,7 @@ t_stat ctc_svc(UNIT *uptr)
 
 t_stat ctc_attach(UNIT *uptr, CONST char *cptr)
 {
-    return sim_disk_attach(uptr, cptr, 512, 1, TRUE, 0, "CIPHER23", 0, 0);
+    return sim_disk_attach(uptr, cptr, VTOC_SECSZ, 1, TRUE, 0, "CIPHER23", 0, 0);
 }
 
 t_stat ctc_detach(UNIT *uptr)

@@ -28,6 +28,7 @@
    from the author.
 */
 
+#include "3b2_defs.h"
 #include "3b2_dmac.h"
 
 DMA_STATE dma_state;
@@ -55,10 +56,18 @@ DEVICE dmac_dev = {
 dmac_dma_handler device_dma_handlers[] = {
     {DMA_ID_CHAN,  IDBASE+ID_DATA_REG,  &id_drq,         dmac_generic_dma, id_after_dma},
     {DMA_IF_CHAN,  IFBASE+IF_DATA_REG,  &if_state.drq,   dmac_generic_dma, if_after_dma},
-    {DMA_IUA_CHAN, IUBASE+IUA_DATA_REG, &iu_console.drq, iu_dma,           NULL},
-    {DMA_IUB_CHAN, IUBASE+IUB_DATA_REG, &iu_contty.drq,  iu_dma,           NULL},
+    {DMA_IUA_CHAN, IUBASE+IUA_DATA_REG, &iu_console.drq, iu_dma_console,   NULL},
+    {DMA_IUB_CHAN, IUBASE+IUB_DATA_REG, &iu_contty.drq,  iu_dma_contty,    NULL},
     {0,            0,                   NULL,            NULL,             NULL }
 };
+
+uint32 dma_address(uint8 channel, uint32 offset, t_bool r) {
+    uint32 addr;
+    addr = (PHYS_MEM_BASE + dma_state.channels[channel].addr + offset);
+    /* The top bit of the page address is a R/W bit, so we mask it here */
+    addr |= (uint32) (((uint32)dma_state.channels[channel].page & 0x7f) << 16);
+    return addr;
+}
 
 t_stat dmac_reset(DEVICE *dptr)
 {
@@ -71,7 +80,7 @@ t_stat dmac_reset(DEVICE *dptr)
         dma_state.channels[i].addr = 0;
         dma_state.channels[i].wcount = 0;
         dma_state.channels[i].addr_c = 0;
-        dma_state.channels[i].wcount_c = 0;
+        dma_state.channels[i].wcount_c = -1;
         dma_state.channels[i].ptr = 0;
     }
 
@@ -274,7 +283,7 @@ void dmac_program(uint8 reg, uint8 val)
             dma_state.channels[i].addr = 0;
             dma_state.channels[i].wcount = 0;
             dma_state.channels[i].addr_c = 0;
-            dma_state.channels[i].wcount_c = 0;
+            dma_state.channels[i].wcount_c = -1;
             dma_state.channels[i].ptr = 0;
         }
         break;
@@ -364,7 +373,7 @@ void dmac_generic_dma(uint8 channel, uint32 service_address)
     uint32 addr;
     dma_channel *chan = &dma_state.channels[channel];
 
-    i = (int32) chan->wcount_c;
+    i = chan->wcount_c;
 
     /* TODO: This does not handle decrement-mode transfers,
        which don't seem to be used in SVR3 */

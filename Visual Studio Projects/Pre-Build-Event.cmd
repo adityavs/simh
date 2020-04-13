@@ -21,22 +21,23 @@ rem             files are available in the directory ..\..\windows-build\
 rem
 rem  In addition to the optional activities mentioned above, other activities
 rem  are also performed.  These include:
-rem       - confirming that if the current source is a clone of the simh
-rem         git repository, then assuring that git hooks which manage making
-rem         the git commit hash available during builds are properly installed
-rem         in the repository hooks directory.  When the githooks are installed
-rem         the current commit id is generated if git.exe is available in the
-rem         current path.  If it isn't, then report that fact and suggest how
-rem         to make sure that it is.
-rem       - performing the activities which make the git repository commit id
-rem         available in an include file during compiles.
+rem       - performing the activities which make confirm or generate the git 
+rem         repository commit id available in an include file during compiles.
 rem
 rem
 
 rem Everything implicitly requires BUILD to also be set to have 
 rem any meaning, it always gets set.
 set _X_BUILD=BUILD
+set _X_REQUIRED_WINDOWS_BUILD=20191221
 call :FindVCVersion _VC_VER
+
+set _PDB=%~dpn1.pdb
+if exist "%_PDB%" del/q "%_PDB%"
+set _PDB=
+set _ARG=%~1
+if /i "%_ARG:~-4%" equ ".exe" shift /1
+set _ARG=
 
 :_next_arg
 if "%1" == "" goto _done_args
@@ -61,8 +62,8 @@ goto _next_arg
 pushd ..
 if "%_X_ROM%" == "" goto _done_rom
 SET _BLD=
-if exist BIN\NT\Win32-Debug\BuildROMs.exe SET _BLD=BIN\NT\Win32-Debug\BuildROMs.exe
-if exist BIN\NT\Win32-Release\BuildROMs.exe SET _BLD=BIN\NT\Win32-Release\BuildROMs.exe
+if exist BIN\NT\Win32-Debug\BuildTools\BuildROMs.exe SET _BLD=BIN\NT\Win32-Debug\BuildTools\BuildROMs.exe
+if exist BIN\NT\Win32-Release\BuildTools\BuildROMs.exe SET _BLD=BIN\NT\Win32-Release\BuildTools\BuildROMs.exe
 if "%_BLD%" == "" echo ************************************************
 if "%_BLD%" == "" echo ************************************************
 if "%_BLD%" == "" echo **  Project dependencies are not correct.     **
@@ -73,16 +74,45 @@ if "%_BLD%" == "" echo error: Review the Output Tab for more details.
 if "%_BLD%" == "" exit 1
 %_BLD%
 if not errorlevel 1 goto _done_rom
-if not exist "BIN\NT\Win32-Release\BuildROMs.exe" exit 1
-del "BIN\NT\Win32-Release\BuildROMs.exe"
+if not exist "BIN\NT\Win32-Release\BuildTools\BuildROMs.exe" exit 1
+del "BIN\NT\Win32-Release\BuildTools\BuildROMs.exe"
 popd
 goto _do_rom
 :_done_rom
 popd
 
+:_CheckGit
+if not exist ..\.git goto _done_git
+call :FindGit _GIT_GIT
+if "%_GIT_GIT%" neq "" goto _done_git
+echo ** ERROR ** ERROR ** ERROR ** ERROR ** ERROR ** ERROR **
+echo ** ERROR ** ERROR ** ERROR ** ERROR ** ERROR ** ERROR **
+echo **                                                    **
+echo **   Your local simh code is in a git repository,     **
+echo **   however, the git program executable can not be   **
+echo **   readily found on your system.                    **
+echo **                                                    **
+echo **   You should download and install git from:        **
+echo **                                                    **
+echo **        https://git-scm.com/download/win            **
+echo **                                                    **
+echo **   while installing git for windows, be sure to     **
+echo **   select the option to "Use Git from the Windows   **
+echo **   Command Prompt"                                  **
+echo **                                                    **
+echo **   You should logout and login again after initally **
+echo ""   installing git to be sure that the installation  **
+echo **   location is properly visible in your search path.**
+echo **                                                    **
+echo ** ERROR ** ERROR ** ERROR ** ERROR ** ERROR ** ERROR **
+echo ** ERROR ** ERROR ** ERROR ** ERROR ** ERROR ** ERROR **
+echo error: Review the Output Tab for more details.
+exit 1
+:_done_git
+
 :_check_build
 if "%_X_BUILD%" == "" goto _done_build
-if not exist ../../windows-build-windows-build goto _check_files
+if not exist ..\..\windows-build-windows-build goto _check_files
 rem This is a newly extracted windows-build.zip file with the
 rem top level directory named as it existed in the zip file.
 rem We rename that top level directory.  If a previous one already
@@ -94,8 +124,22 @@ if errorlevel 1 goto _notice3
 if exist ../../windows-build-windows-build goto _notice3
 :_check_files
 call :FindVCVersion _VC_VER
-if not exist ../../windows-build goto _notice1
-if not exist ../../windows-build/lib goto _notice2
+if not exist ..\..\windows-build goto _notice1
+if not exist ..\..\windows-build/lib goto _notice2
+set _X_WINDOWS_BUILD=
+for /F "usebackq tokens=2" %%i in (`findstr /C:"WINDOWS-BUILD" ..\..\windows-build\Windows-Build_Versions.txt`) do SET _X_WINDOWS_BUILD=%%i
+if "%_X_WINDOWS_BUILD%" LSS "%_X_REQUIRED_WINDOWS_BUILD%" goto _notice2
+set _X_LAST_WINDOWS_BUILD=
+if exist Pre-Build-Event.last-windows-build-version.txt for /F "usebackq tokens=2" %%i in (`findstr /C:"WINDOWS-BUILD" Pre-Build-Event.last-windows-build-version.txt`) do SET _X_LAST_WINDOWS_BUILD=%%i
+if "%_X_WINDOWS_BUILD%" EQU "%_X_LAST_WINDOWS_BUILD%" goto _new_or_same_windows_build
+echo Library support has been updated, forcing clean version determination
+if exist ../../windows-build/lib/Debug rmdir/s/q ..\..\windows-build\lib\Debug
+if exist ../../windows-build/lib/Release rmdir/s/q ..\..\windows-build\lib\Release
+if exist ../../windows-build/lib/VisualCVersionSupport.txt del ..\..\windows-build\lib\VisualCVersionSupport.txt
+echo WINDOWS-BUILD           %_X_WINDOWS_BUILD% >Pre-Build-Event.last-windows-build-version.txt
+:_new_or_same_windows_build
+set _X_WINDOWS_BUILD=
+set _X_LAST_WINDOWS_BUILD=
 if not exist ../../windows-build/lib/VisualCVersionSupport.txt goto _find_vc_support
 
 set _X_VC_VER=
@@ -149,6 +193,29 @@ set _LIB_VC_VER=
 :_done_library
 goto _done_build
 :_notice1
+if "%_TRIED_CLONE%" neq "" goto _notice1_announce
+if "%_GIT_GIT%" equ "" goto _notice1_announce
+echo *****************************************************
+echo *****************************************************
+echo **                                                 **
+echo ** The required build support is not yet available.**
+echo **                                                 **
+echo ** Using git to acquire a local copy of the        **
+echo ** windows-build repository from:                  **
+echo **                                                 **
+echo **    https://github.com/simh/windows-build        **
+echo **                                                 **
+echo ** This may take a minute or so.  Please wait...   **
+echo **                                                 **
+echo *****************************************************
+echo *****************************************************
+:_try_clone
+pushd ..\..
+"%_GIT_GIT%" clone https://github.com/simh/windows-build windows-build
+popd
+set _TRIED_CLONE=1
+goto _check_build
+:_notice1_announce
 echo *****************************************************
 echo *****************************************************
 echo **  The required build support is not available.   **
@@ -157,6 +224,42 @@ echo *****************************************************
 set _exit_reason=The required build support is not available.
 goto _ProjectInfo
 :_notice2
+if "%_TRIED_PULL%" neq "" goto _notice2_announce
+if "%_GIT_GIT%" equ "" goto _notice2_announce
+if exist ..\..\windows-build\.git goto _try_pull
+echo *****************************************************
+echo *****************************************************
+echo **                                                 **
+echo **  The required build support is out of date      **
+echo **  and currently isn't a git repository.          **
+echo **                                                 **
+echo **  Removing the current windows-build support     **
+echo **  in preparation for cloning the current         **
+echo **  windows-build git repository.                  **
+echo **                                                 **
+echo **  This may take several minutes...               **
+echo **                                                 **
+echo *****************************************************
+echo *****************************************************
+rmdir /s /q ..\..\windows-build
+goto _try_clone
+:_try_pull
+echo *****************************************************
+echo *****************************************************
+echo **                                                 **
+echo **  The required build support is out of date.     **
+echo **                                                 **
+echo **  Attempting update of your local windows-build  **
+echo **  git repository.  This may take a minute...     **
+echo **                                                 **
+echo *****************************************************
+echo *****************************************************
+pushd ..\..\windows-build
+"%_GIT_GIT%" pull https://github.com/simh/windows-build
+popd
+set _TRIED_PULL=1
+goto _check_build
+:_notice2_announce
 echo *****************************************************
 echo *****************************************************
 echo **  The required build support is out of date.     **
@@ -200,10 +303,10 @@ echo error: Review the Output Tab for more details.
 exit 1
 :_done_build
 
-:_GitHooks
-if not exist ..\.git goto _done_hooks
+:_CheckGit
+if not exist ..\.git goto _done_id
 call :FindGit _GIT_GIT
-if "%_GIT_GIT%" neq "" goto _check_hooks
+if "%_GIT_GIT%" neq "" goto _SetId
 echo ** ERROR ** ERROR ** ERROR ** ERROR ** ERROR ** ERROR **
 echo ** ERROR ** ERROR ** ERROR ** ERROR ** ERROR ** ERROR **
 echo **                                                    **
@@ -227,29 +330,7 @@ echo ** ERROR ** ERROR ** ERROR ** ERROR ** ERROR ** ERROR **
 echo ** ERROR ** ERROR ** ERROR ** ERROR ** ERROR ** ERROR **
 echo error: Review the Output Tab for more details.
 exit 1
-:_check_hooks
-if not exist ..\.git\hooks\post-commit goto _initial_hooks
-fc /b ..\.git\hooks\post-commit git-hooks\post-commit >nul
-if %ERRORLEVEL% equ 0 goto _done_hooks
-echo *****************************************************
-echo *****************************************************
-echo ** Installing updated git hooks in repository      **
-echo *****************************************************
-echo *****************************************************
-goto _install_hooks
-:_initial_hooks
-echo *****************************************************
-echo *****************************************************
-echo ** Installing git hooks in newly cloned repository **
-echo *****************************************************
-echo *****************************************************
-:_install_hooks
-copy /y git-hooks\post* ..\.git\hooks\
-:_do_hooks
-pushd ..
-"%_GIT_GIT%" log -1 --pretty="SIM_GIT_COMMIT_ID %%H%%nSIM_GIT_COMMIT_TIME %%aI" >.git-commit-id
-popd
-:_done_hooks
+:_done_git
 
 :_SetId
 rem
@@ -257,25 +338,19 @@ rem A race condition exists while creating the .git-commit-id.h file.
 rem This race can happen at the beginning of a parallel build where 
 rem several projects can start execution at almost the same time.
 rem
+SET ACTUAL_GIT_COMMIT_ID=
+SET ACTUAL_GIT_COMMIT_TIME=
 SET GIT_COMMIT_ID=
 SET GIT_COMMIT_TIME=
-if not exist ..\.git-commit-id goto _do_hooks
-for /F "usebackq tokens=2" %%i in (`findstr /C:SIM_GIT_COMMIT_ID ..\.git-commit-id`) do SET GIT_COMMIT_ID=%%i
-for /F "usebackq tokens=2" %%i in (`findstr /C:SIM_GIT_COMMIT_TIME ..\.git-commit-id`) do SET GIT_COMMIT_TIME=%%i
-rem
-rem Some 'git' environments don't honor the installed hooks (Visual 
-rem Studio 2015 for example), and in this case the initially generated
-rem .git-commit-id file won't get updated.  We can't be sure of this 
-rem detail, so perform a manual check now.
-SET _GIT_COMMIT_ID_TEMP=.git-commit-id-temp-%RANDOM%
-"%_GIT_GIT%" log -1 --pretty="SIM_GIT_COMMIT_ID %%H%%nSIM_GIT_COMMIT_TIME %%aI" >%_GIT_COMMIT_ID_TEMP%
-for /F "usebackq tokens=2" %%i in (`findstr /C:SIM_GIT_COMMIT_ID %_GIT_COMMIT_ID_TEMP%`) do SET CURRENT_GIT_COMMIT_ID=%%i
-for /F "usebackq tokens=2" %%i in (`findstr /C:SIM_GIT_COMMIT_TIME %_GIT_COMMIT_ID_TEMP%`) do SET CURRENT_GIT_COMMIT_TIME=%%i
-if "%CURRENT_GIT_COMMIT_ID%" neq "%GIT_COMMIT_ID%" move /Y %_GIT_COMMIT_ID_TEMP% ..\.git-commit-id
-if "%CURRENT_GIT_COMMIT_ID%" equ "%GIT_COMMIT_ID%" del %_GIT_COMMIT_ID_TEMP%
-SET _GIT_COMMIT_ID_TEMP=
-SET CURRENT_GIT_COMMIT_ID=
-SET CURRENT_GIT_COMMIT_TIME=
+for /F "usebackq tokens=1" %%i in (`git log -1 "--pretty=%%H"`) do SET ACTUAL_GIT_COMMIT_ID=%%i
+for /F "usebackq tokens=1" %%i in (`git log -1 "--pretty=%%aI"`) do SET ACTUAL_GIT_COMMIT_TIME=%%i
+if exist ..\.git-commit-id for /F "usebackq tokens=2" %%i in (`findstr /C:SIM_GIT_COMMIT_ID ..\.git-commit-id`) do SET GIT_COMMIT_ID=%%i
+if exist ..\.git-commit-id for /F "usebackq tokens=2" %%i in (`findstr /C:SIM_GIT_COMMIT_TIME ..\.git-commit-id`) do SET GIT_COMMIT_TIME=%%i
+if "%ACTUAL_GIT_COMMIT_ID%" neq "%GIT_COMMIT_ID%" "%_GIT_GIT%" log -1 --pretty="SIM_GIT_COMMIT_ID %%H%%nSIM_GIT_COMMIT_TIME %%aI" >..\.git-commit-id
+SET GIT_COMMIT_ID=%ACTUAL_GIT_COMMIT_ID%
+SET GIT_COMMIT_TIME=%ACTUAL_GIT_COMMIT_TIME%
+SET ACTUAL_GIT_COMMIT_ID=
+SET ACTUAL_GIT_COMMIT_TIME=
 :_VerifyGitCommitId.h
 SET OLD_GIT_COMMIT_ID=
 if not exist .git-commit-id.h echo.>.git-commit-id.h
@@ -288,7 +363,9 @@ if errorlevel 1 echo Retrying...
 if errorlevel 1 goto _SetId
 :_IdGood
 :_done_id
+if not exist .git-commit-id.h echo. >.git-commit-id.h
 goto :EOF
+
 
 :WhereInPath
 if "%~$PATH:1" NEQ "" exit /B 0

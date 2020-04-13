@@ -139,9 +139,9 @@ REG uca_reg[] = {
     };
 
 MTAB uc15_mod[] = {
-    { MTAB_XTD|MTAB_VDV, 006, "ADDRESS", "ADDRESS",
+    { MTAB_XTD|MTAB_VDV|MTAB_VALR, 006, "ADDRESS", NULL,
       NULL, &show_addr, NULL },
-    { MTAB_XTD|MTAB_VDV, 0, "VECTOR", "VECTOR",
+    { MTAB_XTD|MTAB_VDV|MTAB_VALR, 0, "VECTOR", NULL,
       NULL, &show_vec, NULL },
     { 0 }
     };
@@ -394,7 +394,7 @@ ucb_buf = 0;
 CLR_INT (UCA);
 CLR_INT (UCB);
 if (uc15_shmem == NULL) {                               /* allocate shared state */
-    r = sim_shmem_open ("UC15SharedState", UC15_STATE_SIZE, &uc15_shmem, &basead);
+    r = sim_shmem_open ("UC15SharedState", UC15_STATE_SIZE * sizeof (int32), &uc15_shmem, &basead);
     if (r != SCPE_OK)
         return r;
     uc15_shstate = (int32 *) basead;
