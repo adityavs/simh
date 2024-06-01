@@ -1,6 +1,6 @@
 /*  altairz80_dsk.c: MITS Altair 88-DISK Simulator
 
-    Copyright (c) 2002-2014, Peter Schorn
+    Copyright (c) 2002-2023, Peter Schorn
 
     Permission is hereby granted, free of charge, to any person obtaining a
     copy of this software and associated documentation files (the "Software"),
@@ -109,12 +109,12 @@
     ----------------------------------------------------------
 
     5/22/2014 - Updated by Mike Douglas to support the Altair Minidisk.
-                This disk uses 35 (vs 70) tracks of 16 (vs 32) sectors 
+                This disk uses 35 (vs 70) tracks of 16 (vs 32) sectors
                 of 137 bytes each.
 
-    6/30/2014 - When the disk is an Altair Minidisk, load the head as 
+    6/30/2014 - When the disk is an Altair Minidisk, load the head as
                 soon as the disk is enabled, and ignore the head
-                unload command (both like the real hardware). 
+                unload command (both like the real hardware).
 
     7/13/2014 - This code previously returned zero when the sector position
                 register was read with the head not loaded. This zero looks
@@ -125,9 +125,9 @@
 
     7/13/2014   Some software for the Altair skips a sector by verifying
                 that "Sector True" goes false. Previously, this code
-                returned "Sector True" every time the sector register 
+                returned "Sector True" every time the sector register
                 was read. Now the flag alternates true and false on
-                subsequent reads of the sector register. 
+                subsequent reads of the sector register.
 */
 
 #include "altairz80_defs.h"
@@ -145,7 +145,7 @@
 #define UNIT_DSK_WLK        (1 << UNIT_V_DSK_WLK)
 #define DSK_SECTSIZE        137                     /* size of sector                           */
 #define DSK_SECT            32                      /* sectors per track                        */
-#define MAX_TRACKS          254                     /* number of tracks,
+#define MAX_TRACKS          2048                    /* number of tracks,
                                                     original Altair has 77 tracks only          */
 #define DSK_TRACSIZE        (DSK_SECTSIZE * DSK_SECT)
 #define MAX_DSK_SIZE        (DSK_TRACSIZE * MAX_TRACKS)
@@ -170,7 +170,7 @@ extern uint32 PCX;
 
 extern t_stat install_bootrom(const int32 bootrom[], const int32 size, const int32 addr, const int32 makeROM);
 extern uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
-                               int32 (*routine)(const int32, const int32, const int32), uint8 unmap);
+                               int32 (*routine)(const int32, const int32, const int32), const char* name, uint8 unmap);
 void install_ALTAIRbootROM(void);
 extern int32 find_unit_index(UNIT *uptr);
 
@@ -391,9 +391,9 @@ static t_stat dsk_reset(DEVICE *dptr) {
     current_disk    = NUM_OF_DSK;
     in9_count       = 0;
     in9_message     = FALSE;
-    sim_map_resource(0x08, 1, RESOURCE_TYPE_IO, &dsk10, dptr->flags & DEV_DIS);
-    sim_map_resource(0x09, 1, RESOURCE_TYPE_IO, &dsk11, dptr->flags & DEV_DIS);
-    sim_map_resource(0x0A, 1, RESOURCE_TYPE_IO, &dsk12, dptr->flags & DEV_DIS);
+    sim_map_resource(0x08, 1, RESOURCE_TYPE_IO, &dsk10, "dsk10", dptr->flags & DEV_DIS);
+    sim_map_resource(0x09, 1, RESOURCE_TYPE_IO, &dsk11, "dsk11", dptr->flags & DEV_DIS);
+    sim_map_resource(0x0A, 1, RESOURCE_TYPE_IO, &dsk12, "dsk12", dptr->flags & DEV_DIS);
     return SCPE_OK;
 }
 /* dsk_attach - determine type of drive attached based on disk image size */
@@ -440,8 +440,7 @@ static t_stat dsk_boot(int32 unitno, DEVICE *dptr) {
                 (bootrom_dsk[UNIT_NO_OFFSET_2 - 1] == LDA_INSTRUCTION)) {
             bootrom_dsk[UNIT_NO_OFFSET_1] = unitno & 0xff;             /* LD A,<unitno>        */
             bootrom_dsk[UNIT_NO_OFFSET_2] = 0x80 | (unitno & 0xff);    /* LD a,80h | <unitno>  */
-        }
-        else { /* Attempt to modify non LD A,<> instructions is refused. */
+        } else { /* Attempt to modify non LD A,<> instructions is refused. */
                 sim_printf("Incorrect boot ROM offsets detected.\n");
             return SCPE_IERR;
         }
@@ -483,8 +482,7 @@ static void writebuf(void) {
                       current_disk, PCX, current_track[current_disk],
                       current_sector[current_disk], rtn);
         }
-    }
-    else if ( (dsk_dev.dctrl & VERBOSE_MSG) && (warnLock[current_disk] < warnLevelDSK) ) {
+    } else if ( (dsk_dev.dctrl & VERBOSE_MSG) && (warnLock[current_disk] < warnLevelDSK) ) {
         /* write locked - print warning message if required */
         warnLock[current_disk]++;
         sim_debug(VERBOSE_MSG, &dsk_dev,
@@ -547,8 +545,7 @@ int32 dsk10(const int32 port, const int32 io, const int32 data) {
                       current_disk, PCX, current_disk);
         }
         current_disk = NUM_OF_DSK;
-    }
-    else {
+    } else {
         current_sector[current_disk]    = 0xff; /* reset internal counters */
         current_byte[current_disk]      = 0xff;
         if (data & 0x80)                            /* disable drive? */
@@ -558,7 +555,7 @@ int32 dsk10(const int32 port, const int32 io, const int32 data) {
             if (current_track[current_disk] == 0)   /* track 0? */
                 current_flag[current_disk] |= 0x40; /* yes, set track 0 true as well */
             if (sectors_per_track[current_disk] == MINI_DISK_SECT)  /* drive enable loads head for Minidisk */
-                current_flag[current_disk] |= 0x84;  
+                current_flag[current_disk] |= 0x84;
         }
     }
     return 0;   /* ignored since OUT */
@@ -716,8 +713,7 @@ int32 dsk12(const int32 port, const int32 io, const int32 data) {
             current_byte[current_disk] = 0;
         }
         return dskbuf[current_byte[current_disk]++] & 0xff;
-    }
-    else {
+    } else {
         if (current_byte[current_disk] >= DSK_SECTSIZE)
             writebuf();     /* from above we have that current_disk < NUM_OF_DSK */
         else {

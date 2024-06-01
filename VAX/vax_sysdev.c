@@ -59,11 +59,9 @@
 
 #include <math.h>
 
-#ifdef DONT_USE_INTERNAL_ROM
-#define BOOT_CODE_FILENAME "ka655x.bin"
-#else /* !DONT_USE_INTERNAL_ROM */
 #include "vax_ka655x_bin.h" /* Defines BOOT_CODE_FILENAME and BOOT_CODE_ARRAY, etc */
-#endif /* DONT_USE_INTERNAL_ROM */
+
+const char *boot_code_filename = BOOT_CODE_FILENAME;
 
 #define UNIT_V_NODELAY  (UNIT_V_UF + 0)                 /* ROM access equal to RAM access */
 #define UNIT_NODELAY    (1u << UNIT_V_NODELAY)
@@ -605,15 +603,21 @@ return SCPE_OK;
 t_stat rom_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr)
 {
 fprintf (st, "Read-only memory (ROM)\n\n");
-fprintf (st, "The boot ROM consists of a single unit, simulating the 128KB boot ROM.  It\n");
+fprintf (st, "The boot ROM consists of a single unit, simulating the %uKB boot ROM.  It\n", ROMSIZE >> 10);
 fprintf (st, "has no registers.  The boot ROM can be loaded with a binary byte stream\n");
 fprintf (st, "using the LOAD -r command:\n\n");
-fprintf (st, "    LOAD -r KA655X.BIN        load ROM image KA655X.BIN\n\n");
+fprintf (st, "    LOAD -r %s        load ROM image %s\n\n", boot_code_filename, boot_code_filename);
 fprintf (st, "When the simulator starts running (via the BOOT command), if the ROM has\n");
-fprintf (st, "not yet been loaded, an attempt will be made to automatically load the\n");
-fprintf (st, "ROM image from the file ka655x.bin in the current working directory.\n");
-fprintf (st, "If that load attempt fails, then a copy of the missing ROM file is\n");
-fprintf (st, "written to the current directory and the load attempt is retried.\n\n");
+#if !defined (DONT_USE_INTERNAL_ROM)
+    fprintf (st, "not yet been loaded, an internal 'built-in' copy of the %s image\n", boot_code_filename);
+    fprintf (st, "will be loaded into the ROM address space.\n");
+#else
+    fprintf (st, "not yet been loaded, an attempt will be made to automatically load the\n");
+    fprintf (st, "ROM image from the file %s in the current working directory.\n", BOOT_CODE_FILENAME);
+    fprintf (st, "If that load attempt fails, then a copy of the missing ROM file is\n");
+    fprintf (st, "written to the current directory and the load attempt is retried.\n");
+#endif
+fprintf (st, "Once the ROM address space has been populated execution will be started.\n\n");
 fprintf (st, "ROM accesses a use a calibrated delay that slows ROM-based execution to\n");
 fprintf (st, "about 500K instructions per second.  This delay is required to make the\n");
 fprintf (st, "power-up self-test routines run correctly on very fast hosts.\n");
@@ -1706,7 +1710,7 @@ if ((ptr = get_sim_sw (ptr)) == NULL)               /* get switches */
     return SCPE_INVSW;
 get_glyph (ptr, gbuf, 0);                           /* get glyph */
 if (gbuf[0] && strcmp (gbuf, "CPU"))
-    return SCPE_ARG;                                /* Only can specify CPU device */
+    return sim_messagef (SCPE_ARG, "Invalid boot device: %s, must specify BOOT CPU or simply BOOT\n", gbuf);
 return run_cmd (flag, "CPU");
 }
 
@@ -1724,7 +1728,7 @@ conpsl = PSL_IS | PSL_IPL1F | CON_PWRUP;
 if (rom == NULL)
     return SCPE_IERR;
 if (*rom == 0) {                                        /* no boot? */
-    r = cpu_load_bootcode (BOOT_CODE_FILENAME, BOOT_CODE_ARRAY, BOOT_CODE_SIZE, TRUE, 0);
+    r = cpu_load_bootcode (BOOT_CODE_FILENAME, BOOT_CODE_ARRAY, BOOT_CODE_SIZE, TRUE, 0, BOOT_CODE_FILEPATH, BOOT_CODE_CHECKSUM);
     if (r != SCPE_OK)
         return r;
     }
@@ -1836,7 +1840,7 @@ else if (MATCH_CMD(gbuf, "MICROVAX") == 0) {
     vc_dev.flags = vc_dev.flags | DEV_DIS;               /* disable QVSS */
     lk_dev.flags = lk_dev.flags | DEV_DIS;               /* disable keyboard */
     vs_dev.flags = vs_dev.flags | DEV_DIS;               /* disable mouse */
-    reset_all (0);                                       /* reset everything */
+    reset_all_p (0);                                     /* powerup reset everything */
 #endif
     }
 else if (MATCH_CMD(gbuf, "VAXSTATION") == 0) {
@@ -1846,7 +1850,7 @@ else if (MATCH_CMD(gbuf, "VAXSTATION") == 0) {
     vc_dev.flags = vc_dev.flags & ~DEV_DIS;              /* enable QVSS */
     lk_dev.flags = lk_dev.flags & ~DEV_DIS;              /* enable keyboard */
     vs_dev.flags = vs_dev.flags & ~DEV_DIS;              /* enable mouse */
-    reset_all (0);                                       /* reset everything */
+    reset_all_p (0);                                     /* powerup reset everything */
 #else
     return sim_messagef(SCPE_ARG, "Simulator built without Graphic Device Support\n");
 #endif
@@ -1886,6 +1890,22 @@ fprintf (st, "  AUTOGEN (SYS$SYSTEM:MODPARAMS.DAT).  If PHYSICALPAGES is specifi
 fprintf (st, "  it will have to be adjusted before running AUTOGEN to recognize more memory.\n");
 fprintf (st, "  The default value for PHYSICALPAGES is 1048576, which describes 512MB of RAM.\n\n");
 fprintf (st, "Initial memory size is 16MB.\n\n");
+fprintf (st, "The real KA655 is limited to 64MB of memory, and the KA655 firmware is\n");
+fprintf (st, "coded to this limit.  However, the VAX operating systems (VMS, Ultrix,\n");
+fprintf (st, "NetBSD) know very little about the hardware details.  Instead, they take\n");
+fprintf (st, "their memory size information from the Restart Parameter Block (RPB)\n");
+fprintf (st, "constructed by the console firmware when it starts.  If the firmware sets\n");
+fprintf (st, "up an RPB for more than 64MB, the operating systems use the extra memory\n");
+fprintf (st, "without requiring source changes.\n\n");
+fprintf (st, "If more than 64MB of memory is configured, the simulator implements an 18th\n");
+fprintf (st, "CMCTL register.  This read-only register gives the size of main memory in MB.\n");
+fprintf (st, "The console firmware (ka655x.bin) uses this to set up the RPB. Other parts\n");
+fprintf (st, "of the firmware are generally unaware of extended memory; thus, all the\n");
+fprintf (st, "diagnostic commands operate only on the first 64MB of memory.  However the\n");
+fprintf (st, "console SHOW MEM command will display the total amount of memory the simulator\n");
+fprintf (st, "is configured with.\n\n");
+fprintf (st, "If 64MB or less of memory is configured, the 18th CMCTL register is invisible,\n");
+fprintf (st, "and the simulator operates like a real KA655.\n\n");
 fprintf (st, "The CPU supports the BOOT command and is the only VAX device to do so.  Note\n");
 fprintf (st, "that the behavior of the bootstrap depends on the capabilities of the console\n");
 fprintf (st, "terminal emulator.  If the terminal window supports full VT100 emulation\n");

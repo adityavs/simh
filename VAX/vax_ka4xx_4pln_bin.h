@@ -1,14 +1,69 @@
 #ifndef ROM_vax_ka4xx_4pln_bin_H
 #define ROM_vax_ka4xx_4pln_bin_H 0
 /*
-   VAX/vax_ka4xx_4pln_bin.h         produced at Sun Apr  7 13:22:58 2019
-   from VAX/ka4xx_4pln.bin which was last modified at Sun Apr  7 13:06:07 2019
+   VAX/vax_ka4xx_4pln_bin.h         produced at Sun Jul  2 10:11:57 2023
+   from VAX/ka4xx_4pln.bin which was last modified at Sat Apr 29 15:56:37 2023
    file size: 65536 (0x10000) - checksum: 0xFF9CD286
    This file is a generated file and should NOT be edited or changed by hand.
 */
+#if !defined(BOOT_CODE_SIZE)
 #define BOOT_CODE_SIZE 0x10000
+#define BOOT_CODE_CHECKSUM 0xFF9CD286
 #define BOOT_CODE_FILENAME "ka4xx_4pln.bin"
+#define BOOT_CODE_FILEPATH "VAX/ka4xx_4pln.bin"
+#if defined(DONT_USE_INTERNAL_ROM)
+#define BOOT_CODE_ARRAY NULL
+#else
 #define BOOT_CODE_ARRAY vax_ka4xx_4pln_bin
+#endif
+#define BOOT_CODE_URL NULL
+#endif
+#if !defined(BOOT_CODE_SIZE_1)
+#define BOOT_CODE_SIZE_1 0x10000
+#define BOOT_CODE_CHECKSUM_1 0xFF9CD286
+#define BOOT_CODE_FILENAME_1 "ka4xx_4pln.bin"
+#define BOOT_CODE_FILEPATH_1 "VAX/ka4xx_4pln.bin"
+#if defined(DONT_USE_INTERNAL_ROM)
+#define BOOT_CODE_ARRAY_1 NULL
+#else
+#define BOOT_CODE_ARRAY_1 vax_ka4xx_4pln_bin
+#endif
+#define BOOT_CODE_URL_1 NULL
+#elif !defined(BOOT_CODE_SIZE_2)
+#define BOOT_CODE_SIZE_2 0x10000
+#define BOOT_CODE_CHECKSUM_2 0xFF9CD286
+#define BOOT_CODE_FILENAME_2 "ka4xx_4pln.bin"
+#define BOOT_CODE_FILEPATH_2 "VAX/ka4xx_4pln.bin"
+#if defined(DONT_USE_INTERNAL_ROM)
+#define BOOT_CODE_ARRAY_2 NULL
+#else
+#define BOOT_CODE_ARRAY_2 vax_ka4xx_4pln_bin
+#endif
+#define BOOT_CODE_URL_2 NULL
+#elif !defined(BOOT_CODE_SIZE_3)
+#define BOOT_CODE_SIZE_3 0x10000
+#define BOOT_CODE_CHECKSUM_3 0xFF9CD286
+#define BOOT_CODE_FILENAME_3 "ka4xx_4pln.bin"
+#define BOOT_CODE_FILEPATH_3 "VAX/ka4xx_4pln.bin"
+#if defined(DONT_USE_INTERNAL_ROM)
+#define BOOT_CODE_ARRAY_3 NULL
+#else
+#define BOOT_CODE_ARRAY_3 vax_ka4xx_4pln_bin
+#endif
+#define BOOT_CODE_URL_3 NULL
+#elif !defined(BOOT_CODE_SIZE_4)
+#define BOOT_CODE_SIZE_4 0x10000
+#define BOOT_CODE_CHECKSUM_4 0xFF9CD286
+#define BOOT_CODE_FILENAME_4 "ka4xx_4pln.bin"
+#define BOOT_CODE_FILEPATH_4 "VAX/ka4xx_4pln.bin"
+#if defined(DONT_USE_INTERNAL_ROM)
+#define BOOT_CODE_ARRAY_4 NULL
+#else
+#define BOOT_CODE_ARRAY_4 vax_ka4xx_4pln_bin
+#endif
+#define BOOT_CODE_URL_4 NULL
+#endif
+#if !defined(DONT_USE_INTERNAL_ROM)
 unsigned char vax_ka4xx_4pln_bin[] = {
 0x01,0x00,0x01,0x00,0x55,0xAA,0x33,0x40,0x02,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
@@ -4106,4 +4161,5 @@ unsigned char vax_ka4xx_4pln_bin[] = {
 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x41,};
+#endif
 #endif /* ROM_vax_ka4xx_4pln_bin_H */

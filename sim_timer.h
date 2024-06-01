@@ -41,9 +41,6 @@ extern "C" {
 #if defined(__struct_timespec_defined)
 #define _TIMESPEC_DEFINED
 #endif
-#if defined(SIM_ASYNCH_IO) || defined(USE_READER_THREAD)
-#include <pthread.h>
-#endif
 
 #if defined (__APPLE__)
 #define HAVE_STRUCT_TIMESPEC     /* OSX defined the structure but doesn't tell us */
@@ -78,6 +75,7 @@ int clock_gettime(int clock_id, struct timespec *tp);
 
 #define SIM_INITIAL_IPS 5000000                     /* uncalibrated assumption */
                                                     /* about instructions per second */
+#define SIM_PRE_CALIBRATE_MIN_MS    100             /* minimum time to run precalibration activities */
 
 #define SIM_IDLE_CAL    10                          /* ms to calibrate */
 #define SIM_IDLE_STMIN  2                           /* min sec for stability */
@@ -109,7 +107,9 @@ double sim_timenow_double (void);
 int32 sim_rtcn_init (int32 time, int32 tmr);
 int32 sim_rtcn_init_unit (UNIT *uptr, int32 time, int32 tmr);
 int32 sim_rtcn_init_unit_ticks (UNIT *uptr, int32 time, int32 tmr, int32 ticksper);
+void sim_rtcn_debug_time (struct timespec *now);
 void sim_rtcn_get_time (struct timespec *now, int tmr);
+time_t sim_get_time (time_t *now);
 t_stat sim_rtcn_tick_ack (uint32 time, int32 tmr);
 void sim_rtcn_init_all (void);
 int32 sim_rtcn_calb (uint32 ticksper, int32 tmr);
@@ -159,6 +159,7 @@ uint32 sim_get_rom_delay_factor (void);
 void sim_set_rom_delay_factor (uint32 delay);
 int32 sim_rom_read_with_delay (int32 val);
 double sim_host_speed_factor (void);
+t_stat sim_os_process_cpu_times (double *system, double *user);
 
 extern t_bool sim_idle_enab;                        /* idle enabled flag */
 extern volatile t_bool sim_idle_wait;               /* idle waiting flag */

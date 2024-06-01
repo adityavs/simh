@@ -49,7 +49,6 @@
 #endif
 
 #include "sim_defs.h"
-#include <setjmp.h>
 
 /* Stops and aborts */
 
@@ -837,6 +836,7 @@ enum opcodes {
 #define VAX_IDLE_BSDNEW     0x20
 #define VAX_IDLE_SYSV       0x40
 #define VAX_IDLE_ELN        0x40    /* VAXELN */
+#define VAX_IDLE_INFOSERVER 0x80    /* InfoServer */
 extern uint32 cpu_idle_mask;        /* idle mask */
 extern int32 extra_bytes;           /* bytes referenced by current string instruction */
 extern BITFIELD cpu_psl_bits[];
@@ -1027,7 +1027,7 @@ extern int32 cpu_instruction_set;
 #define BOOT_CODE_SIZE 0
 #endif
 
-extern t_stat cpu_load_bootcode (const char *filename, const unsigned char *builtin_code, size_t size, t_bool rom, t_addr offset);
+extern t_stat cpu_load_bootcode (const char *filename, const unsigned char *builtin_code, size_t size, t_bool rom, t_addr offset, const char *filepath, unsigned int checksum);
 extern t_stat cpu_print_model (FILE *st);
 extern t_stat cpu_show_model (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 extern t_stat cpu_set_model (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
@@ -1035,12 +1035,13 @@ extern t_stat cpu_show_instruction_set (FILE *st, UNIT *uptr, int32 val, CONST v
 extern t_stat cpu_set_instruction_set (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 extern t_stat cpu_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr);
 extern t_stat cpu_model_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr);
-extern void vax_init();
+extern void vax_init(void);
 extern const uint32 byte_mask[33];
 extern int32 autcon_enb;                                /* autoconfig enable */
 extern int32 int_req[IPL_HLVL];                         /* intr, IPL 14-17 */
 extern uint32 *M;                                       /* Memory */
 extern DEVICE cpu_dev;                                  /* CPU */
 extern UNIT cpu_unit;                                   /* CPU */
+extern const char *boot_code_filename;
 
 #endif                                                  /* _VAX_DEFS_H */

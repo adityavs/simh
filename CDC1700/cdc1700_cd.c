@@ -325,30 +325,14 @@ IO_DEVICE CDdev = IODEV(NULL, "1733-2", 1733, 3, 0xFF, 0,
 */
 
 UNIT cd_unit[] = {
-  { UDATA(&cd_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_856_4, CD856_4_SIZE),
-    0, 0, 0, 0, 0, &CDunits[0], &cd_unit[1]
-  },
-  { UDATA(&cd_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_856_4, CD856_4_SIZE),
-    0, 0, 0, 0, 0, &CDunits[0], &cd_unit[0]
-  },
-  { UDATA(&cd_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_856_4, CD856_4_SIZE),
-    0, 0, 0, 0, 0, &CDunits[1], &cd_unit[3]
-  },
-  { UDATA(&cd_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_856_4, CD856_4_SIZE),
-    0, 0, 0, 0, 0, &CDunits[1], &cd_unit[2]
-  },
-  { UDATA(&cd_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_856_4, CD856_4_SIZE),
-    0, 0, 0, 0, 0, &CDunits[2], &cd_unit[5]
-  },
-  { UDATA(&cd_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_856_4, CD856_4_SIZE),
-    0, 0, 0, 0, 0, &CDunits[2], &cd_unit[4]
-  },
-  { UDATA(&cd_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_856_4, CD856_4_SIZE),
-    0, 0, 0, 0, 0, &CDunits[3], &cd_unit[7]
-  },
-  { UDATA(&cd_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_856_4, CD856_4_SIZE),
-    0, 0, 0, 0, 0, &CDunits[3], &cd_unit[6]
-  }
+  { UDATA(&cd_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_856_4, CD856_4_SIZE)},
+  { UDATA(&cd_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_856_4, CD856_4_SIZE)},
+  { UDATA(&cd_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_856_4, CD856_4_SIZE)},
+  { UDATA(&cd_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_856_4, CD856_4_SIZE)},
+  { UDATA(&cd_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_856_4, CD856_4_SIZE)},
+  { UDATA(&cd_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_856_4, CD856_4_SIZE)},
+  { UDATA(&cd_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_856_4, CD856_4_SIZE)},
+  { UDATA(&cd_svc, UNIT_FIX+UNIT_ATTABLE+UNIT_DISABLE+UNIT_856_4, CD856_4_SIZE)}
 };
 
 REG cd_reg[] = {
@@ -1058,7 +1042,27 @@ static t_stat CDreset(DEVICE *dptr)
 t_stat cd_reset(DEVICE *dptr)
 {
   t_stat r = SCPE_OK;
+  static t_bool Initialized = FALSE;
 
+  if (!Initialized) { /* Initialize additional UNIT state not done by UDATA macro */
+    Initialized = TRUE;
+    cd_unit[0].up7 = &CDunits[0];
+    cd_unit[0].up8 = &cd_unit[1];
+    cd_unit[1].up7 = &CDunits[0];
+    cd_unit[1].up8 = &cd_unit[0];
+    cd_unit[2].up7 = &CDunits[1];
+    cd_unit[2].up8 = &cd_unit[3];
+    cd_unit[3].up7 = &CDunits[1];
+    cd_unit[3].up8 = &cd_unit[2];
+    cd_unit[4].up7 = &CDunits[2];
+    cd_unit[4].up8 = &cd_unit[5];
+    cd_unit[5].up7 = &CDunits[2];
+    cd_unit[5].up8 = &cd_unit[4];
+    cd_unit[6].up7 = &CDunits[3];
+    cd_unit[6].up8 = &cd_unit[7];
+    cd_unit[7].up7 = &CDunits[3];
+    cd_unit[7].up8 = &cd_unit[6];
+  }
   if (IOFWinitialized)
     if ((dptr->flags & DEV_DIS) == 0)
       if ((r = checkReset(dptr, CDdev.iod_equip) == SCPE_OK)) {
@@ -1078,7 +1082,6 @@ t_stat cd_reset(DEVICE *dptr)
 t_stat cd_attach(UNIT *uptr, CONST char *cptr)
 {
   struct cdio_unit *iou = (struct cdio_unit *)uptr->up7;
-  const char *drivetype = ((uptr->flags & UNIT_856_4) != 0) ? "856-4" : "856-2";
   t_addr capac = ((uptr->flags & UNIT_856_4) != 0) ? CD856_4_SIZE : CD856_2_SIZE;
   t_stat r;
 
@@ -1115,7 +1118,7 @@ t_stat cd_detach(UNIT *uptr)
 {
   struct cdio_unit *iou = (struct cdio_unit *)uptr->up7;
   t_stat stat;
-
+  
   sim_cancel(uptr);
   stat = detach_unit(uptr);
 
@@ -1124,15 +1127,13 @@ t_stat cd_detach(UNIT *uptr)
     if (iou->ondrive[iou->disk] == uptr)
       iou->disk = CD_NONE;
 
-  return SCPE_OK;
+  return stat;
 }
 
 /* Check if I/O should be rejected */
 
 t_bool CDreject(IO_DEVICE *iod, t_bool output, uint8 reg)
 {
-  struct cdio_unit *iou = (struct cdio_unit *)iod->iod_drive;
-
   if (output) {
     switch (reg) {
       /*

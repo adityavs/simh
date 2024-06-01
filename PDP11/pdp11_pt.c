@@ -111,9 +111,9 @@ REG ptr_reg[] = {
 
 MTAB ptr_mod[] = {
     { MTAB_XTD|MTAB_VDV, 0, "ADDRESS", NULL,
-      NULL, &show_addr, NULL },
+      NULL, &show_addr, NULL, "Bus address" },
     { MTAB_XTD|MTAB_VDV, 0, "VECTOR", NULL,
-      NULL, &show_vec, NULL },
+      NULL, &show_vec, NULL, "Interrupt vector" },
     { 0 }
     };
 
@@ -162,9 +162,9 @@ REG ptp_reg[] = {
 
 MTAB ptp_mod[] = {
     { MTAB_XTD|MTAB_VDV, 0, "ADDRESS", NULL,
-      NULL, &show_addr, NULL },
+      NULL, &show_addr, NULL, "Bus address" },
     { MTAB_XTD|MTAB_VDV, 0, "VECTOR", NULL,
-      NULL, &show_vec, NULL },
+      NULL, &show_vec, NULL, "Interrupt vector" },
     { 0 }
     };
 
@@ -406,7 +406,9 @@ t_stat ptp_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cpt
 fprintf (st, "PC11 Paper Tape Punch (PTP)\n\n");
 fprintf (st, "The paper tape punch (PTP) writes data to a disk file.  The POS register\n");
 fprintf (st, "specifies the number of the next data item to be written.  Thus, by changing\n");
-fprintf (st, "POS, the user can backspace or advance the punch.\n");
+fprintf (st, "POS, the user can backspace or advance the punch.\n\n");
+fprintf (st, "The default position after ATTACH is to position at the end of an existing file.\n");
+fprintf (st, "A new file can be created if you attach with the -N switch.\n\n");
 fprint_set_help (st, dptr);
 fprint_show_help (st, dptr);
 fprint_reg_help (st, dptr);

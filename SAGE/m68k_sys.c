@@ -32,14 +32,6 @@
 */
 
 #include "m68k_cpu.h"
-#include <ctype.h>
-#include <string.h>
-
-#if defined(_WIN32)
-#include <windows.h>
-#else
-#include <unistd.h>
-#endif
 
 t_stat set_iobase(UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 {
@@ -272,7 +264,7 @@ t_stat sim_load(FILE* fptr, CONST char* cptr, CONST char* fnam, t_bool flag)
     return SCPE_OK;
 }
 
-const char *sim_stop_messages[] = {
+const char *sim_stop_messages[SCPE_BASE] = {
     "---",
     "PC Breakpoint",
     "MEM Breakpoint",

@@ -1197,8 +1197,8 @@ REG dmc_reg[] = {
     { BRDATAD (SPEED,            dmc_speed, DEV_RDX, 32, DMC_NUMDEVICE,         "line speed") },
     { BRDATAD (CORRUPT,     dmc_corruption, DEV_RDX, 32, DMC_NUMDEVICE,         "data corruption factor (0.1%)") },
     { BRDATAD (DIAG,         dmc_microdiag, DEV_RDX,  1, DMC_NUMDEVICE,         "Microdiagnostic Enabled") },
-    { BRDATAD (PEER,             dmc_peer,  DEV_RDX,  8, DMC_NUMDEVICE*PEERSIZE, "peer address:port") },
-    { BRDATAD (PORT,             dmc_port,  DEV_RDX,  8, DMC_NUMDEVICE*PEERSIZE, "listen port") },
+    { CRDATAD (PEER,             dmc_peer,  DEV_RDX,  8, DMC_NUMDEVICE*PEERSIZE, "peer address:port") },
+    { CRDATAD (PORT,             dmc_port,  DEV_RDX,  8, DMC_NUMDEVICE*PEERSIZE, "listen port") },
     { BRDATAD (BASEADDR,      dmc_baseaddr, DEV_RDX, 32, DMC_NUMDEVICE,         "program set base address") },
     { BRDATAD (BASESIZE,      dmc_basesize, DEV_RDX, 16, DMC_NUMDEVICE,         "program set base size") },
     { BRDATAD (MODEM,            dmc_modem, DEV_RDX,  8, DMC_NUMDEVICE,         "modem control bits") },
@@ -1215,8 +1215,8 @@ REG dmp_reg[] = {
     { BRDATAD (SEL10,            dmp_sel10, DEV_RDX, 16, DMP_NUMDEVICE,         "Select 10 CSR") },
     { BRDATAD (SPEED,            dmp_speed, DEV_RDX, 32, DMC_NUMDEVICE,         "line speed") },
     { BRDATAD (CORRUPT,     dmp_corruption, DEV_RDX, 32, DMC_NUMDEVICE,         "data corruption factor (0.1%)") },
-    { BRDATAD (PEER,              dmp_peer, DEV_RDX,  8, DMC_NUMDEVICE*PEERSIZE, "peer address:port") },
-    { BRDATAD (PORT,              dmp_port, DEV_RDX,  8, DMC_NUMDEVICE*PEERSIZE, "listen port") },
+    { CRDATAD (PEER,              dmp_peer, DEV_RDX,  8, DMC_NUMDEVICE*PEERSIZE, "peer address:port") },
+    { CRDATAD (PORT,              dmp_port, DEV_RDX,  8, DMC_NUMDEVICE*PEERSIZE, "listen port") },
     { BRDATAD (BASEADDR,      dmp_baseaddr, DEV_RDX, 32, DMC_NUMDEVICE,         "program set base address") },
     { BRDATAD (BASESIZE,      dmp_basesize, DEV_RDX, 16, DMC_NUMDEVICE,         "program set base size") },
     { BRDATAD (MODEM,            dmp_modem, DEV_RDX,  8, DMP_NUMDEVICE,         "modem control bits") },
@@ -1250,6 +1250,8 @@ MTAB dmc_mod[] = {
         &set_addr, &show_addr, NULL, "Bus address" },
     { MTAB_XTD|MTAB_VDV|MTAB_VALR,          1, "VECTOR", "VECTOR",
         &set_vec,  &show_vec,  NULL, "Interrupt vector" },
+    { MTAB_XTD|MTAB_VDV|MTAB_NMO, 0, "SYNC", NULL,
+      NULL, &tmxr_show_sync, NULL, "Display attachable DDCMP synchronous links" },
     { 0 } };
 
 extern DEVICE dmp_dev;
@@ -1891,6 +1893,18 @@ const char helpString[] =
     "\n"
     "+sim> ATTACH %U port,UDP\n"
     "\n"
+    " Communication may alternately use the DDCMP synchronous framer device.\n"
+    " The DDCMP synchronous device is a USB device that can send and\n"
+    " receive DDCMP frames over either RS-232 or coax synchronous lines.\n"
+    " Refer to https://github.com/pkoning2/ddcmp for documentation.\n"
+    "\n"
+    "+sim> ATTACH %U SYNC=ifname:mode:speed\n"
+    "\n"
+    " Communicate via the synchronous DDCMP framer interface \"ifname\", \n"
+    " and framer mode \"mode\" -- one of INTEGRAL, RS232_DTE, or\n"
+    " RS232_DCE.  The \"speed\" argument is the bit rate for the line.\n"
+    " In SYNC mode, the \"PEER\" parameter is not used and need not be set.\n"
+    " You can use \"SHOW SYNC\" to see the list of synchronous DDCMP devices.\n"
     "2 Examples\n"
     " To configure two simulators to talk to each other use the following\n"
     " example:\n"
@@ -1905,6 +1919,8 @@ const char helpString[] =
     "+sim> SET %U PEER=LOCALHOST:1111\n"
     "+sim> ATTACH %U 2222\n"
     "\n"
+    " To communicate with an \"integral modem\" DMC or similar, at 56 kbps:\n"
+    "+sim> ATTACH %U SYNC=sync0:INTEGRAL:56000\n"
     "1 Monitoring\n"
     " The %D device and %U line configuration and state can be displayed with\n"
     " one of the available show commands.\n"
@@ -3972,14 +3988,21 @@ if (!cptr || !*cptr)
     return SCPE_ARG;
 if (!(uptr->flags & UNIT_ATTABLE))
     return SCPE_NOATT;
-if (!peer[0]) {
-    sim_printf ("Peer must be specified before attach\n");
-    return SCPE_ARG;
+if (0 == strncasecmp (cptr, "SYNC", 4)) {
+    sprintf (attach_string, "Line=%d,%s", dmc, cptr);
+    ans = tmxr_open_master (mp, attach_string);
+}
+else {
+    if (!peer[0]) {
+        sim_printf ("Peer must be specified before attach\n");
+        return SCPE_ARG;
     }
-sprintf (attach_string, "Line=%d,Connect=%s,%s", dmc, peer, cptr);
-ans = tmxr_open_master (mp, attach_string);                 /* open master socket */
+    sprintf (attach_string, "Line=%d,Connect=%s,%s", dmc, peer, cptr);
+    ans = tmxr_open_master (mp, attach_string);                 /* open master socket */
+}
 if (ans != SCPE_OK)
     return ans;
+mp->dptr = dptr;
 strncpy (port, cptr, sizeof(dmc_port[0]));
 uptr->filename = (char *)malloc (strlen(port)+1);
 strcpy (uptr->filename, port);

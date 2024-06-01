@@ -47,10 +47,6 @@ extern int32 PCX_S;     /* PC register (8086), 20 bit                   */
 extern uint32 PCX;      /* external view of PC                          */
 extern UNIT cpu_unit;
 
-#if !UNIX_PLATFORM
-extern void pollForCPUStop(void);
-#endif
-
 void i86_intr_raise(PC_ENV *m,uint8 intrnum);
 void cpu8086reset(void);
 t_stat sim_instr_8086(void);
@@ -81,7 +77,7 @@ void cpu8086_intr(uint8 intrnum);
 
 /* this file includes subroutines which do:
    stuff involving decoding instruction formats.
-   stuff involving accessess of immediate data via IP.
+   stuff involving accesses of immediate data via IP.
    etc.
 */
 
@@ -129,7 +125,7 @@ void cpu8086_intr(uint8 intrnum)
     i86_intr_raise(&cpu8086, intrnum);
 }
 
-static void setViewRegisters(void) {
+void setViewRegisters(void) {
     FLAGS_S = cpu8086.R_FLG;
     AX_S = cpu8086.R_AX;
     BX_S = cpu8086.R_BX;
@@ -193,7 +189,7 @@ static uint32 getFullPC(void) {
     return cpu8086.R_IP + (cpu8086.R_CS << 4);
 }
 
-extern int32 switch_cpu_now; /* hharte */
+extern int32 switch_cpu_now;
 
 t_stat sim_instr_8086(void) {
     t_stat reason = SCPE_OK;
@@ -202,23 +198,19 @@ t_stat sim_instr_8086(void) {
     setCPURegisters();
     intr = 0;
     newIP = PCX_S - 16 * CS_S;
-    switch_cpu_now = TRUE; /* hharte */
+    switch_cpu_now = TRUE;
     if ((0 <= newIP) && (newIP <= 0xffff))
         cpu8086.R_IP = newIP;
     else {
         if (CS_S != ((PCX_S & 0xf0000) >> 4)) {
             cpu8086.R_CS = (PCX_S & 0xf0000) >> 4;
             if (cpu_unit.flags & UNIT_CPU_VERBOSE)
-                sim_printf("CPU: " ADDRESS_FORMAT " Segment register CS set to %04x" NLP, PCX, cpu8086.R_CS);
+                sim_printf("CPU: " ADDRESS_FORMAT " Segment register CS set to %04x\n", PCX, cpu8086.R_CS);
         }
         cpu8086.R_IP = PCX_S & 0xffff;
     }
     while (switch_cpu_now == TRUE) {                        /* loop until halted    */
         if (sim_interval <= 0) {                            /* check clock queue    */
-#if !UNIX_PLATFORM
-            /* poll on platforms without reliable signalling but not too often */
-            pollForCPUStop(); /* following sim_process_event will check for stop */
-#endif
             if ( (reason = sim_process_event()) )
                 break;
         }
@@ -270,7 +262,7 @@ t_stat sim_instr_8086(void) {
         PCX += 2;
         PCX_S = PCX;
     } else {
-        PCX_S = (reason == STOP_HALT) | (reason == STOP_OPCODE) ? PCX : getFullPC();
+        PCX_S = ((reason == STOP_HALT) || (reason == STOP_OPCODE)) ? PCX : getFullPC();
     }
 
     setViewRegisters();
@@ -683,7 +675,7 @@ uint8 fetch_data_byte(PC_ENV *m, uint16 offset)
        refer to addresses relative to the SS.  So, at the minimum,
        all decodings of addressing modes would have to set/clear
        a bit describing whether the access is relative to DS or SS.
-       That is the function of the cpu-state-varible  m->sysmode.
+       That is the function of the cpu-state-variable  m->sysmode.
        There are several potential states:
        repe prefix seen  (handled elsewhere)
        repne prefix seen  (ditto)
@@ -691,7 +683,7 @@ uint8 fetch_data_byte(PC_ENV *m, uint16 offset)
        ds segment override
        es segment override
        ss segment override
-       ds/ss select (in absense of override)
+       ds/ss select (in absence of override)
        Each of the above 7 items are handled with a bit in the sysmode
        field.
        The latter 5 can be implemented as a simple state machine:
@@ -736,7 +728,7 @@ uint8 fetch_data_byte(PC_ENV *m, uint16 offset)
        value  =  GetBYTEExtended((((uint32)m->R_SS << 4) + offset) & 0xFFFFF);
        break;
      default:
-       sim_printf("error: should not happen:  multiple overrides. " NLP);
+       sim_printf("error: should not happen:  multiple overrides. \n");
        value = 0;
        halt_sys(m);
     }
@@ -816,7 +808,7 @@ uint16 fetch_data_word(PC_ENV *m, uint16 offset)
                 + (uint16)(offset + 1)) & 0xFFFFF) << 8);
        break;
      default:
-       sim_printf("error: should not happen:  multiple overrides. " NLP);
+       sim_printf("error: should not happen:  multiple overrides. \n");
        value = 0;
        halt_sys(m);
     }
@@ -880,7 +872,7 @@ void store_data_byte(PC_ENV *m, uint16 offset, uint8 val)
        segment = m->R_SS;
        break;
      default:
-       sim_printf("error: should not happen:  multiple overrides. " NLP);
+       sim_printf("error: should not happen:  multiple overrides. \n");
        segment = 0;
        halt_sys(m);
     }
@@ -942,7 +934,7 @@ void store_data_word(PC_ENV *m, uint16 offset, uint16 val)
        segment = m->R_SS;
        break;
      default:
-       sim_printf("error: should not happen:  multiple overrides." NLP);
+       sim_printf("error: should not happen:  multiple overrides.\n");
        segment = 0;
        halt_sys(m);
     }

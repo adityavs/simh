@@ -1,6 +1,6 @@
 /* pdp8_rf.c: RF08 fixed head disk simulator
 
-   Copyright (c) 1993-2013, Robert M Supnik
+   Copyright (c) 1993-2021, Robert M Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -25,6 +25,7 @@
 
    rf           RF08 fixed head disk
 
+   21-Apr-21    RMS     Fixed bug if read overwrites WC memory location
    17-Sep-13    RMS     Changed to use central set_bootpc routine
    03-Sep-13    RMS     Added explicit void * cast
    15-May-06    RMS     Fixed bug in autosize attach (Dave Gesswein)
@@ -133,18 +134,19 @@ const char *rf_description (DEVICE *dptr);
 
    rf_dev       RF device descriptor
    rf_unit      RF unit descriptor
-   pcell_unit   photocell timing unit (orphan)
+   pcell_unit   photocell timing unit
    rf_reg       RF register list
 */
 
 DIB rf_dib = { DEV_RF, 5, { &rf60, &rf61, &rf62, NULL, &rf64 } };
 
-UNIT rf_unit = {
-    UDATA (&rf_svc, UNIT_FIX+UNIT_ATTABLE+
-           UNIT_BUFABLE+UNIT_MUSTBUF, RF_DKSIZE)
+UNIT rf_units[] = {
+    { UDATA (&rf_svc, UNIT_FIX+UNIT_ATTABLE+
+             UNIT_BUFABLE+UNIT_MUSTBUF, RF_DKSIZE) },
+    { UDATA (&pcell_svc, UNIT_DIS, 0) }
     };
-
-UNIT pcell_unit = { UDATA (&pcell_svc, 0, 0) };
+#define rf_unit    rf_units[0]
+#define pcell_unit rf_units[1]
 
 REG rf_reg[] = {
     { ORDATAD (STA, rf_sta, 12, "status") },
@@ -174,8 +176,8 @@ MTAB rf_mod[] = {
     };
 
 DEVICE rf_dev = {
-    "RF", &rf_unit, rf_reg, rf_mod,
-    1, 8, 20, 1, 8, 12,
+    "RF", rf_units, rf_reg, rf_mod,
+    2, 8, 20, 1, 8, 12,
     NULL, NULL, &rf_reset,
     &rf_boot, &rf_attach, NULL,
     &rf_dib, DEV_DISABLE | DEV_DIS, 0,
@@ -307,6 +309,7 @@ t_stat rf_svc (UNIT *uptr)
 {
 int32 pa, t, mex;
 int16 *fbuf = (int16 *) uptr->filebuf;
+uint16 wc = 0;
 
 UPDATE_PCELL;                                           /* update photocell */
 if ((uptr->flags & UNIT_BUF) == 0) {                    /* not buf? abort */
@@ -322,7 +325,7 @@ do {
         rf_sta = rf_sta | RFS_NXD;
         break;
         }
-    M[RF_WC] = (M[RF_WC] + 1) & 07777;                  /* incr word count */
+    wc = M[RF_WC] = (M[RF_WC] + 1) & 07777;             /* incr word count */
     M[RF_MA] = (M[RF_MA] + 1) & 07777;                  /* incr mem addr */
     pa = mex | M[RF_MA];                                /* add extension */
     if (uptr->FUNC == RF_READ) {                        /* read? */
@@ -340,9 +343,9 @@ do {
             }
         }
     rf_da = (rf_da + 1) & 03777777;                     /* incr disk addr */
-    } while ((M[RF_WC] != 0) && (rf_burst != 0));       /* brk if wc, no brst */
+    } while ((wc != 0) && (rf_burst != 0));             /* brk if wc, no brst */
 
-if ((M[RF_WC] != 0) && ((rf_sta & RFS_ERR) == 0))       /* more to do? */
+if ((wc != 0) && ((rf_sta & RFS_ERR) == 0))             /* more to do? */
     sim_activate (&rf_unit, rf_time);                   /* sched next */
 else {
     rf_done = 1;                                        /* done */

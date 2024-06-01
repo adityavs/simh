@@ -25,8 +25,6 @@
  */
 
 #include "ibm1130_defs.h"
-#include <ctype.h>
-#include <stdarg.h>
 
 extern DEVICE cpu_dev, console_dev, dsk_dev, cr_dev,  cp_dev, ptr_dev, ptp_dev, t2741_dev;
 extern DEVICE tti_dev, tto_dev,     prt_dev, log_dev, sca_dev;
@@ -71,7 +69,7 @@ DEVICE *sim_devices[] = {
     NULL
 };
 
-const char *sim_stop_messages[] = {
+const char *sim_stop_messages[SCPE_BASE] = {
     "Unknown error",
     "Wait",
     "Invalid command", 

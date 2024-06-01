@@ -121,15 +121,15 @@ UNIT                mt_unit[] = {
 };
 
 REG                 mt_reg[] = {
-    {BRDATA(BUFF, mt_buffer, 16, 8, sizeof(mt_buffer)), REG_HRO},
+    {CRDATA(BUFF, mt_buffer, 16, 8, sizeof(mt_buffer)), REG_HRO},
     {0}
 };
 
 MTAB                mt_mod[] = {
-    {MTUF_WLK, 0, "write enabled", "WRITEENABLED", NULL, NULL, NULL,
-     "Write ring in place"},
-    {MTUF_WLK, MTUF_WLK, "write locked", "LOCKED", NULL, NULL, NULL,
-     "no Write ring in place"},
+    { MTAB_XTD|MTAB_VUN, 0, "write enabled", "WRITEENABLED", 
+        &set_writelock, &show_writelock,   NULL, "Write ring in place" },
+    { MTAB_XTD|MTAB_VUN, 1, NULL, "LOCKED", 
+        &set_writelock, NULL,   NULL, "no Write ring in place" },
     {MTAB_XTD | MTAB_VUN, 0, "FORMAT", "FORMAT",
      &sim_tape_set_fmt, &sim_tape_show_fmt, NULL,
       "Set/Display tape format (SIMH, E11, TPC, P7B)" },

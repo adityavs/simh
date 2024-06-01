@@ -290,7 +290,7 @@ sim_instr(void)
     uint8               op2 = 0;
     int                 iowait = 0;     /* Wait for IO to start */
     int                 chwait = 0;     /* Wait for channel to be inactive */
-    int                 sign;
+    uint8               sign;
     int                 instr_count = 0; /* Number of instructions to execute */
 
     if (sim_step != 0) {
@@ -560,7 +560,7 @@ sim_instr(void)
                      temp &= ldmask[f2-f1+1];
                      /* Compute final sign */
                      if ((opcode & 0x10f) == (OP_AAS1 & 0x10f)) {
-                          sign = utmp;
+                          sign = (uint8)(utmp & 0xf);
                      } else if (sign & 0xc) {
                           sign = ASIGN >> 40;
                      } else if (sign & 2) {
@@ -679,7 +679,7 @@ sim_instr(void)
                 case OP_M:
                      /* Multiplicand in AC[3] */
                      AC[1] = AC[2] = 0;
-                     sign = (MBR & SMASK) >> 40;
+                     sign = (uint8)(((MBR & SMASK) >> 40) & 0xf);
                      MBR = (rdmask[f1] & MBR) >> ((9 - f2) * 4);
                      sign = (((AC[3] & SMASK) >> 40) != sign) ? 6 : 9;
                      /* Multiply MBR * AC[3] result to AC[1],AC[2] <low> */
@@ -714,7 +714,7 @@ sim_instr(void)
                 case OP_D:
                      /* dividend AC[1],AC[2] */
                      /* divisor in MBR */
-                     sign = (MBR & SMASK) >> 40;
+                     sign = (uint8)(((MBR & SMASK) >> 40) & 0xf);
                      AC[3] = (rdmask[f1] & MBR) >> ((9 - f2) * 4);
                      if (AC[3] == 0) {
                         AC[3] |= ((t_uint64)sign) << 40;
@@ -1536,7 +1536,7 @@ sim_instr(void)
                          hst[hst_p].before = MBR;
                      }
                      temp = dec_bin_idx(MBR);
-                     sign = ((MBR & SMASK)>> 40);
+                     sign = (uint8)(((MBR & SMASK)>> 40) & 0xf);
                      MBR &= DMASK;
                      switch(sign) {
                      case 0x6:  /* + -  tc b add */
@@ -1567,7 +1567,7 @@ sim_instr(void)
                      }
                      temp = 0;
                      upd_idx(&temp, MA);
-                     sign = ((MBR & SMASK)>> 40);
+                     sign = (uint8)(((MBR & SMASK)>> 40) & 0xf);
                      MBR &= DMASK;
                      switch(sign) {
                      default:
@@ -2887,8 +2887,10 @@ cpu_set_hist(UNIT * uptr, int32 val, CONST char *cptr, void *desc)
         return SCPE_OK;
     }
     lnt = (int32) get_uint(cptr, 10, HIST_MAX, &r);
-    if ((r != SCPE_OK) || (lnt && (lnt < HIST_MIN)))
-        return SCPE_ARG;
+    if (r != SCPE_OK)
+        return sim_messagef (SCPE_ARG, "Invalid Numeric Value: %s.  Maximum is %d\n", cptr, HIST_MAX);
+    if (lnt && (lnt < HIST_MIN))
+        return sim_messagef (SCPE_ARG, "%d is less than the minumum history value of %d\n", lnt, HIST_MIN);
     hst_p = 0;
     if (hst_lnt) {
         free(hst);
@@ -2929,6 +2931,10 @@ cpu_show_hist(FILE * st, UNIT * uptr, int32 val, CONST void *desc)
         di = di + hst_lnt;
     fprintf(st, "IC    EA    BEFORE      AFTER       INST\n\n");
     for (k = 0; k < lnt; k++) { /* print specified */
+        if (stop_cpu) {                 /* Control-C (SIGINT) */
+            stop_cpu = FALSE;
+            break;                      /* abandon remaining output */
+        }
         h = &hst[(++di) % hst_lnt];     /* entry pointer */
         if (h->ic & HIST_PC) {  /* instruction? */
             fprintf(st, "%05d ", h->ic & 0xffff);

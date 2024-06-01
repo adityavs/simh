@@ -1,9 +1,7 @@
 /*************************************************************************
  *                                                                       *
- * $Id: s100_disk2.c 1995 2008-07-15 03:59:13Z hharte $                  *
- *                                                                       *
- * Copyright (c) 2007-2008 Howard M. Harte.                              *
- * http://www.hartetec.com                                               *
+ * Copyright (c) 2007-2022 Howard M. Harte.                              *
+ * https://github.com/hharte                                             *
  *                                                                       *
  * Permission is hereby granted, free of charge, to any person obtaining *
  * a copy of this software and associated documentation files (the       *
@@ -18,16 +16,17 @@
  *                                                                       *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,       *
  * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF    *
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND                 *
- * NONINFRINGEMENT. IN NO EVENT SHALL HOWARD M. HARTE BE LIABLE FOR ANY  *
- * CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,  *
- * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE     *
- * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                *
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-            *
+ * INFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE   *
+ * LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN       *
+ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN     *
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE      *
+ * SOFTWARE.                                                             *
  *                                                                       *
- * Except as contained in this notice, the name of Howard M. Harte shall *
+ * Except as contained in this notice, the names of The Authors shall    *
  * not be used in advertising or otherwise to promote the sale, use or   *
  * other dealings in this Software without prior written authorization   *
- * Howard M. Harte.                                                      *
+ * from the Authors.                                                     *
  *                                                                       *
  * SIMH Interface based on altairz80_hdsk.c, by Peter Schorn.            *
  *                                                                       *
@@ -35,9 +34,6 @@
  *     CompuPro DISK2 Hard Disk Controller module for SIMH.              *
  * This module must be used in conjunction with the CompuPro Selector    *
  * Channel Module for proper operation.                                  *
- *                                                                       *
- * Environment:                                                          *
- *     User mode only                                                    *
  *                                                                       *
  *************************************************************************/
 
@@ -82,8 +78,8 @@ typedef struct {
     uint8   sel_drive;  /* Currently selected drive */
     uint8   head_sel;   /* Head select (signals to drive itself) */
     uint8   head;       /* Head set by write to the HEAD register */
-    uint8   cyl;        /* Cyl that the current operation is targetting */
-    uint8   sector;     /* Sector the current READ/WRITE operation is targetting */
+    uint8   cyl;        /* Cyl that the current operation is targeting */
+    uint8   sector;     /* Sector the current READ/WRITE operation is targeting */
     uint8   hdr_sector; /* Current sector for WRITE_HEADER */
     uint8   ctl_attn;
     uint8   ctl_run;
@@ -116,7 +112,7 @@ extern uint32 PCX;
 extern t_stat set_iobase(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 extern t_stat show_iobase(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 extern uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
-        int32 (*routine)(const int32, const int32, const int32), uint8 unmap);
+                               int32 (*routine)(const int32, const int32, const int32), const char* name, uint8 unmap);
 extern int32 selchan_dma(uint8 *buf, uint32 len);
 extern int32 find_unit_index(UNIT *uptr);
 extern void raise_ss1_interrupt(uint8 intnum);
@@ -156,11 +152,11 @@ static REG disk2_reg[] = {
     { HRDATAD (SEL_DRIVE,  disk2_info_data.sel_drive, 3,
                "Currently selected drive"),                             },
     { HRDATAD (CYL,        disk2_info_data.cyl,       8,
-               "Cylinder that the current operation is targetting"),    },
+               "Cylinder that the current operation is targeting"),     },
     { HRDATAD (HEAD,       disk2_info_data.head,      8,
-               "Head that the current operation is targetting"),        },
+               "Head that the current operation is targeting"),         },
     { HRDATAD (SECTOR,     disk2_info_data.sector,    8,
-               "Sector that the current operation is targetting"),      },
+               "Sector that the current operation is targeting"),       },
 
     { NULL }
 };
@@ -211,10 +207,10 @@ static t_stat disk2_reset(DEVICE *dptr)
     PNP_INFO *pnp = (PNP_INFO *)dptr->ctxt;
 
     if(dptr->flags & DEV_DIS) { /* Disconnect I/O Ports */
-        sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &disk2dev, TRUE);
+        sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &disk2dev, "disk2dev", TRUE);
     } else {
         /* Connect DISK2 at base address */
-        if(sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &disk2dev, FALSE) != 0) {
+        if(sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &disk2dev, "disk2dev", FALSE) != 0) {
             sim_printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
             return SCPE_ARG;
         }
@@ -442,7 +438,7 @@ static uint8 DISK2_Write(const uint32 Addr, uint8 cData)
                                   " READ_DATA: (C:%d/H:%d/S:%d)\n", PCX, disk2_info->cyl, disk2_info->head, disk2_info->sector);
                         if(disk2_info->head_sel != disk2_info->head) {
                             sim_printf("DISK2: " ADDRESS_FORMAT
-                                   " READ_DATA: head_sel != head" NLP, PCX);
+                                   " READ_DATA: head_sel != head\n", PCX);
                         }
                         /* See FIXME above... that might be why this does not work properly... */
                         if(disk2_info->cyl != pDrive->track) { /* problem, should not happen, see above */
@@ -461,12 +457,12 @@ static uint8 DISK2_Write(const uint32 Addr, uint8 cData)
                                 if(sdata.u.header[2] == disk2_info->sector) {
                                     if(sdata.u.header[0] != disk2_info->cyl) { /*pDrive->track) { */
                                         sim_printf("DISK2: " ADDRESS_FORMAT
-                                                   " READ_DATA Incorrect header: track" NLP, PCX);
+                                                   " READ_DATA Incorrect header: track\n", PCX);
                                         disk2_info->timeout = 1;
                                     }
                                     if(sdata.u.header[1] != disk2_info->head) {
                                         sim_printf("DISK2: " ADDRESS_FORMAT
-                                                   " READ_DATA Incorrect header: head" NLP, PCX);
+                                                   " READ_DATA Incorrect header: head\n", PCX);
                                         disk2_info->timeout = 1;
                                     }
 
@@ -475,7 +471,7 @@ static uint8 DISK2_Write(const uint32 Addr, uint8 cData)
                                 }
                                 if(i == pDrive->nsectors) {
                                     sim_printf("DISK2: " ADDRESS_FORMAT
-                                               " Sector not found" NLP, PCX);
+                                               " Sector not found\n", PCX);
                                     disk2_info->timeout = 1;
                                 }
                             }
@@ -489,7 +485,7 @@ static uint8 DISK2_Write(const uint32 Addr, uint8 cData)
                         sim_debug(WR_DATA_MSG, &disk2_dev, "DISK2: " ADDRESS_FORMAT
                                   " WRITE_DATA: (C:%d/H:%d/S:%d)\n", PCX, disk2_info->cyl, disk2_info->head, disk2_info->sector);
                         if(disk2_info->head_sel != disk2_info->head) {
-                            sim_printf("DISK2: " ADDRESS_FORMAT " WRITE_DATA: head_sel != head" NLP, PCX);
+                            sim_printf("DISK2: " ADDRESS_FORMAT " WRITE_DATA: head_sel != head\n", PCX);
                         }
                         if(disk2_info->cyl != pDrive->track) { /* problem, should not happen, see above */
                             sim_debug(ERROR_MSG, &disk2_dev, "DISK2: " ADDRESS_FORMAT
@@ -509,12 +505,12 @@ static uint8 DISK2_Write(const uint32 Addr, uint8 cData)
                                 if(sdata.u.header[2] == disk2_info->sector) {
                                     if(sdata.u.header[0] != disk2_info->cyl) {
                                         sim_printf("DISK2: " ADDRESS_FORMAT
-                                                   " WRITE_DATA Incorrect header: track" NLP, PCX);
+                                                   " WRITE_DATA Incorrect header: track\n", PCX);
                                         disk2_info->timeout = 1;
                                     }
                                     if(sdata.u.header[1] != disk2_info->head) {
                                         sim_printf("DISK2: " ADDRESS_FORMAT
-                                                   " WRITE_DATA Incorrect header: head" NLP, PCX);
+                                                   " WRITE_DATA Incorrect header: head\n", PCX);
                                         disk2_info->timeout = 1;
                                     }
 
@@ -533,7 +529,7 @@ static uint8 DISK2_Write(const uint32 Addr, uint8 cData)
                                               " WRITE_DATA: sim_fread error.\n", PCX);
                                 }
                                 if(i == pDrive->nsectors) {
-                                    sim_printf("DISK2: " ADDRESS_FORMAT " Sector not found" NLP, PCX);
+                                    sim_printf("DISK2: " ADDRESS_FORMAT " Sector not found\n", PCX);
                                     disk2_info->timeout = 1;
                                 }
                             }
@@ -579,10 +575,10 @@ static uint8 DISK2_Write(const uint32 Addr, uint8 cData)
                                       " READ_HEADER: sim_fseek error.\n", PCX);
                         }
                         selchan_dma(sdata.raw, 3);
-                        
+
                         break;
                     default:
-                        sim_printf("DISK2: " ADDRESS_FORMAT " Unknown CMD=%d" NLP, PCX, disk2_info->ctl_op);
+                        sim_printf("DISK2: " ADDRESS_FORMAT " Unknown CMD=%d\n", PCX, disk2_info->ctl_op);
                         break;
                 }
 
@@ -609,7 +605,7 @@ static uint8 DISK2_Write(const uint32 Addr, uint8 cData)
                             break;
                         default:
                             sim_printf("DISK2: " ADDRESS_FORMAT
-                                   " Error, invalid drive select=0x%x" NLP, PCX, cData >> 4);
+                                   " Error, invalid drive select=0x%x\n", PCX, cData >> 4);
                             break;
                     }
 

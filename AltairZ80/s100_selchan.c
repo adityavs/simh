@@ -1,9 +1,7 @@
 /*************************************************************************
  *                                                                       *
- * $Id: s100_selchan.c 1995 2008-07-15 03:59:13Z hharte $                *
- *                                                                       *
- * Copyright (c) 2007-2008 Howard M. Harte.                              *
- * http://www.hartetec.com                                               *
+ * Copyright (c) 2007-2022 Howard M. Harte.                              *
+ * https://github.com/hharte                                             *
  *                                                                       *
  * Permission is hereby granted, free of charge, to any person obtaining *
  * a copy of this software and associated documentation files (the       *
@@ -18,24 +16,22 @@
  *                                                                       *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,       *
  * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF    *
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND                 *
- * NONINFRINGEMENT. IN NO EVENT SHALL HOWARD M. HARTE BE LIABLE FOR ANY  *
- * CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,  *
- * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE     *
- * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                *
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-            *
+ * INFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE   *
+ * LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN       *
+ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN     *
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE      *
+ * SOFTWARE.                                                             *
  *                                                                       *
- * Except as contained in this notice, the name of Howard M. Harte shall *
+ * Except as contained in this notice, the names of The Authors shall    *
  * not be used in advertising or otherwise to promote the sale, use or   *
  * other dealings in this Software without prior written authorization   *
- * Howard M. Harte.                                                      *
+ * from the Authors.                                                     *
  *                                                                       *
  * SIMH Interface based on altairz80_hdsk.c, by Peter Schorn.            *
  *                                                                       *
  * Module Description:                                                   *
  *     CompuPro Selector Channel module for SIMH.                        *
- *                                                                       *
- * Environment:                                                          *
- *     User mode only                                                    *
  *                                                                       *
  *************************************************************************/
 
@@ -70,7 +66,7 @@ int32 selchan_dma(uint8 *buf, uint32 len);
 extern t_stat set_iobase(UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 extern t_stat show_iobase(FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 extern uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
-        int32 (*routine)(const int32, const int32, const int32), uint8 unmap);
+                               int32 (*routine)(const int32, const int32, const int32), const char* name, uint8 unmap);
 extern uint32 PCX;
 
 /* These are needed for DMA. */
@@ -125,10 +121,10 @@ static t_stat selchan_reset(DEVICE *dptr)
     PNP_INFO *pnp = (PNP_INFO *)dptr->ctxt;
 
     if(dptr->flags & DEV_DIS) { /* Disconnect I/O Ports */
-        sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &selchandev, TRUE);
+        sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &selchandev, "selchandev", TRUE);
     } else {
         /* Connect SELCHAN at base address */
-        if(sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &selchandev, FALSE) != 0) {
+        if(sim_map_resource(pnp->io_base, pnp->io_size, RESOURCE_TYPE_IO, &selchandev, "selchandev", FALSE) != 0) {
             sim_printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, pnp->io_base);
             return SCPE_ARG;
         }
@@ -144,7 +140,7 @@ static t_stat selchan_reset(DEVICE *dptr)
 
 static int32 selchandev(const int32 port, const int32 io, const int32 data)
 {
-    DBG_PRINT(("SELCHAN: IO %s, Port %02x" NLP, io ? "WR" : "RD", port));
+    DBG_PRINT(("SELCHAN: IO %s, Port %02x\n", io ? "WR" : "RD", port));
     if(io) {
         selchan_info->selchan <<= 8;
         selchan_info->selchan &= 0xFFFFFF00;
@@ -172,14 +168,14 @@ int32 selchan_dma(uint8 *buf, uint32 len)
     uint32 i;
 
     if(selchan_info->reg_cnt != 4) {
-        sim_printf("SELCHAN: " ADDRESS_FORMAT " Programming error: selector channel disabled." NLP,
+        sim_printf("SELCHAN: " ADDRESS_FORMAT " Programming error: selector channel disabled.\n",
             PCX);
         return (-1);
     }
 
     if(selchan_info->dma_mode & SELCHAN_MODE_IO)
     {
-        sim_printf("SELCHAN: " ADDRESS_FORMAT " I/O Not supported" NLP, PCX);
+        sim_printf("SELCHAN: " ADDRESS_FORMAT " I/O Not supported\n", PCX);
         return (-1);
     } else {
         sim_debug(DMA_MSG, &selchan_dev, "SELCHAN: " ADDRESS_FORMAT " DMA %s Transfer, len=%d\n", PCX, (selchan_info->dma_mode & SELCHAN_MODE_WRITE) ? "WR" : "RD", len);

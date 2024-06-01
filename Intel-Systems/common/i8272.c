@@ -700,23 +700,23 @@ t_stat i8272_attach (UNIT *uptr, CONST char *cptr)
     devnum = fdcnum = uptr->u5;
     fddnum = uptr->u6;
     flen = uptr->capac;
-    fddst72[devnum][uptr->u6] |= RDY;             /* set unit ready */
-    for (i=0; i<fddnum; i++) {               //for each disk drive
-        if (flen == 368640) {               /* 5" 360K DSDD */
+    fddst72[devnum][uptr->u6] |= RDY;   /* set unit ready */
+    for (i=0; i<fddnum; i++) {          //for each disk drive
+        if (flen == 368640) {           /* 5" 360K DSDD */
             maxcyl72[devnum][uptr->u6] = 40;
-            fddst72[devnum][uptr->u6] |= TS;          // two sided
+            fddst72[devnum][uptr->u6] |= TS; // two sided
         }
         else if (flen == 737280) {          /* 5" 720K DSQD / 3.5" 720K DSDD */
             maxcyl72[devnum][uptr->u6] = 80;
-            fddst72[devnum][uptr->u6] |= TS;          // two sided
+            fddst72[devnum][uptr->u6] |= TS; // two sided
         }
         else if (flen == 1228800) {         /* 5" 1.2M DSHD */
             maxcyl72[devnum][uptr->u6] = 80;
-            fddst72[devnum][uptr->u6] |= TS;          // two sided
+            fddst72[devnum][uptr->u6] |= TS; // two sided
         }
         else if (flen == 1474560) {         /* 3.5" 1.44M DSHD */
             maxcyl72[devnum][uptr->u6] = 80;
-            fddst72[devnum][uptr->u6] |= TS;          // two sided
+            fddst72[devnum][uptr->u6] |= TS; // two sided
         }
         sim_printf("   Drive-%d: %d bytes of disk image %s loaded, fddst72=%02X\n", 
             uptr->u6, i, uptr->filename, fddst72[devnum][uptr->u6]);

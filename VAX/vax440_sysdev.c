@@ -31,17 +31,7 @@
 
 #include "vax_defs.h"
 #include "sim_ether.h"
-#include <time.h>
 
-#ifdef DONT_USE_INTERNAL_ROM
-#if defined (VAX_46)
-#define BOOT_CODE_FILENAME "ka46a.bin"
-#elif defined (VAX_47)
-#define BOOT_CODE_FILENAME "ka47a.bin"
-#elif defined (VAX_48)
-#define BOOT_CODE_FILENAME "ka48a.bin"
-#endif
-#else /* !DONT_USE_INTERNAL_ROM */
 #if defined (VAX_46)
 #include "vax_ka46a_bin.h" /* Defines BOOT_CODE_FILENAME and BOOT_CODE_ARRAY, etc */
 #elif defined (VAX_47)
@@ -49,8 +39,8 @@
 #elif defined (VAX_48)
 #include "vax_ka48a_bin.h" /* Defines BOOT_CODE_FILENAME and BOOT_CODE_ARRAY, etc */
 #endif
-#endif /* DONT_USE_INTERNAL_ROM */
 
+const char *boot_code_filename = BOOT_CODE_FILENAME;
 
 t_stat vax460_boot (int32 flag, CONST char *ptr);
 
@@ -965,7 +955,7 @@ char gbuf[CBUFSIZE];
 
 get_glyph (ptr, gbuf, 0);                           /* get glyph */
 if (gbuf[0] && strcmp (gbuf, "CPU"))
-    return SCPE_ARG;                                /* Only can specify CPU device */
+    return sim_messagef (SCPE_ARG, "Invalid boot device: %s, must specify BOOT CPU or simply BOOT\n", gbuf);
 return run_cmd (flag, "CPU");
 }
 
@@ -984,7 +974,7 @@ conpsl = PSL_IS | PSL_IPL1F | CON_PWRUP;
 if (rom == NULL)
     return SCPE_IERR;
 if (*rom == 0) {                                        /* no boot? */
-    r = cpu_load_bootcode (BOOT_CODE_FILENAME, BOOT_CODE_ARRAY, BOOT_CODE_SIZE, TRUE, 0);
+    r = cpu_load_bootcode (BOOT_CODE_FILENAME, BOOT_CODE_ARRAY, BOOT_CODE_SIZE, TRUE, 0, BOOT_CODE_FILEPATH, BOOT_CODE_CHECKSUM);
     if (r != SCPE_OK)
         return r;
     }
@@ -1052,7 +1042,7 @@ if (MATCH_CMD(gbuf, "MICROVAX") == 0) {
     vs_dev.flags = vs_dev.flags | DEV_DIS;               /* disable mouse */
 #endif
     strcpy (sim_name, "MicroVAX 3100-80 (KA47)");
-    reset_all (0);                                       /* reset everything */
+    reset_all_p (0);                                     /* powerup reset everything */
     }
 #if defined (VAX_46) || defined (VAX_48)
 else if (MATCH_CMD(gbuf, "VAXSTATION") == 0) {
@@ -1065,7 +1055,7 @@ else if (MATCH_CMD(gbuf, "VAXSTATION") == 0) {
 #else   /* VAX_48 */
     strcpy (sim_name, "VAXstation 4000-VLC (KA48)");
 #endif
-    reset_all (0);                                       /* reset everything */
+    reset_all_p (0);                                     /* powerup reset everything */
 #else
     return sim_messagef (SCPE_ARG, "Simulator built without Graphic Device Support\n");
 #endif
@@ -1078,14 +1068,18 @@ return SCPE_OK;
 
 t_stat cpu_print_model (FILE *st)
 {
+const char *model = "";
+
 fprintf (st, "%s", sim_name);
 #if defined (VAX_46)
-fprintf (st, "VAXstation 4000-60 (KA46)");
+model = "VAXstation 4000-60 (KA46)";
 #elif defined (VAX_47)
-fprintf (st, "MicroVAX 3100-80 (KA47)");
+model = "MicroVAX 3100-80 (KA47)";
 #elif defined (VAX_48)
-fprintf (st, "VAXstation 4000-VLC (KA48)");
+model = "VAXstation 4000-VLC (KA48)";
 #endif
+if (strcmp (sim_name, model) != 0)
+    fprintf (st, "%s", model);
 return SCPE_OK;
 }
 

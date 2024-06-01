@@ -26,18 +26,24 @@ rem         repository commit id available in an include file during compiles.
 rem
 rem
 
-rem Everything implicitly requires BUILD to also be set to have 
-rem any meaning, it always gets set.
-set _X_BUILD=BUILD
-set _X_REQUIRED_WINDOWS_BUILD=20191221
-call :FindVCVersion _VC_VER
-
 set _PDB=%~dpn1.pdb
 if exist "%_PDB%" del/q "%_PDB%"
 set _PDB=
 set _ARG=%~1
+set _TARGET=%RANDOM%
+if /i "%_ARG:~-4%" equ ".exe" set _TARGET=%~n1
 if /i "%_ARG:~-4%" equ ".exe" shift /1
 set _ARG=
+
+rem Everything implicitly requires BUILD to also be set to have 
+rem any meaning, it always gets set.
+set _X_BUILD=BUILD
+set _X_REQUIRED_WINDOWS_BUILD=20230504
+call :FindVCVersion _VC_VER _MSVC_VER _MSVC_TOOLSET_VER  _MSVC_TOOLSET_DIR
+echo _VC_VER=%_VC_VER%
+echo _MSVC_VER=%_MSVC_VER%
+echo _MSVC_TOOLSET_VER=%_MSVC_TOOLSET_VER%
+echo _MSVC_TOOLSET_DIR=%_MSVC_TOOLSET_DIR%
 
 :_next_arg
 if "%1" == "" goto _done_args
@@ -46,12 +52,7 @@ if /I "%1" == "ROM"      set _arg=ROM
 if /I "%1" == "BUILD"    set _arg=BUILD
 if /I "%1" == "LIBSDL"   set _arg=LIBSDL
 if /I "%1" == "LIBPCRE"  set _arg=LIBPCRE
-if /I "%1" == "FINDFONT" set _arg=FINDFONT
 if "%_arg%" == ""        echo *** warning *** unknown parameter %1
-if /I "%1" == "FINDFONT" set _X_FontName=%2
-if /I "%1" == "FINDFONT" set _X_FontIncludeName=%3
-if /I "%_arg%" == "FINDFONT" shift
-if /I "%_arg%" == "FINDFONT" shift
 if not "%_arg%" == ""    set _X_%_arg%=%_arg%
 shift
 goto _next_arg
@@ -123,7 +124,7 @@ ren ..\..\windows-build-windows-build windows-build
 if errorlevel 1 goto _notice3
 if exist ../../windows-build-windows-build goto _notice3
 :_check_files
-call :FindVCVersion _VC_VER
+call :FindVCVersion _VC_VER _MSVC_VER _MSVC_TOOLSET_VER _MSVC_TOOLSET_DIR
 if not exist ..\..\windows-build goto _notice1
 if not exist ..\..\windows-build/lib goto _notice2
 set _X_WINDOWS_BUILD=
@@ -143,6 +144,10 @@ set _X_LAST_WINDOWS_BUILD=
 if not exist ../../windows-build/lib/VisualCVersionSupport.txt goto _find_vc_support
 
 set _X_VC_VER=
+if "%_MSVC_TOOLSET_VER%" EQU "v140" set _VC_VER=2015
+if "%_MSVC_TOOLSET_VER%" EQU "v141" set _VC_VER=2017
+if "%_MSVC_TOOLSET_VER%" EQU "v142" set _VC_VER=2019
+if "%_MSVC_TOOLSET_VER%" EQU "v143" set _VC_VER=2022
 for /F "usebackq tokens=2*" %%i in (`findstr /C:"_VC_VER=%_VC_VER% " ..\..\windows-build\lib\VisualCVersionSupport.txt`) do SET _X_VC_VER=%%i %%j
 if "%_X_VC_VER%" neq "" echo Library support for %_X_VC_VER% is available
 if "%_X_VC_VER%" neq "" goto _done_libsdl
@@ -155,23 +160,7 @@ for /F "usebackq tokens=2*" %%i in (`findstr /C:"_VC_VER=%_VC_VER% " "%_X_VC_VER
 echo Enabling Library support for %_X_VC_VER%
 call "%_X_VC_VER_DIR%\Install-Library-Support.cmd"
 :_done_libsdl
-if "%_X_FINDFONT%" == "" goto _done_findfont
-if "%_X_FontName%" == "" goto _done_findfont
-echo. >%_X_FontIncludeName%.temp
-set FONTFILE=%windir%\Fonts\%_X_FontName%
-if not exist "%FONTFILE%" echo Can't find font %_X_FontName%
-if not exist "%FONTFILE%" goto _done_findfont
-set FONTFILE=%FONTFILE:\=/%
-echo #define FONTFILE %FONTFILE% >>%_X_FontIncludeName%.temp
-if not exist %_X_FontIncludeName% goto _found_font
-fc %_X_FontIncludeName%.temp %_X_FontIncludeName% >NUL
-if NOT ERRORLEVEL 1 goto _done_findfont
-:_found_font
-echo Found: %FONTFILE%
-move /Y %_X_FontIncludeName%.temp %_X_FontIncludeName% >NUL
-:_done_findfont
-if exist %_X_FontIncludeName%.temp del %_X_FontIncludeName%.temp
-call :FindVCVersion _VC_VER
+call :FindVCVersion _VC_VER _MSVC_VER _MSVC_TOOLSET_VER _MSVC_TOOLSET_DIR
 if not exist "..\..\windows-build\libpng-1.6.18\projects\Release Library" goto _setup_library
 if not exist "..\..\windows-build\libpng-1.6.18\projects\Release Library\VisualC.version" set _LIB_VC_VER=9
 if exist "..\..\windows-build\libpng-1.6.18\projects\Release Library\VisualC.version" for /f "usebackq delims=." %%v in (`type "..\..\windows-build\libpng-1.6.18\projects\Release Library\VisualC.version"`) do set _LIB_VC_VER=%%v
@@ -216,6 +205,34 @@ popd
 set _TRIED_CLONE=1
 goto _check_build
 :_notice1_announce
+if "%_TRIED_CURL%" neq "" goto _notice3_announce
+call :FindCurl _CURL_CURL
+if "%_CURL_CURL%" equ "" goto _notice3_announce
+call :FindTar _TAR_TAR
+if "%_TAR_TAR%" equ "" goto _notice3_announce
+echo *****************************************************
+echo *****************************************************
+echo **                                                 **
+echo ** The required build support is not yet available.**
+echo **                                                 **
+echo ** Using curl and tar to acquire and expand a      **
+echo ** local copy of the windows-build repository      **
+echo ** in archive form from:                           **
+echo **                                                 **
+echo **    https://github.com/simh/windows-build        **
+echo **                                                 **
+echo ** This may take a minute or so.  Please wait...   **
+echo **                                                 **
+echo *****************************************************
+echo *****************************************************
+pushd ..\..
+%_CURL_CURL% --location https://github.com/simh/windows-build/archive/windows-build.tar.gz --output windows-build.tar.gz
+%_TAR_TAR% -xzf windows-build.tar.gz
+del windows-build.tar.gz
+popd
+set _TRIED_CURL=1
+goto _check_build
+:_notice3_announce
 echo *****************************************************
 echo *****************************************************
 echo **  The required build support is not available.   **
@@ -260,6 +277,34 @@ popd
 set _TRIED_PULL=1
 goto _check_build
 :_notice2_announce
+if "%_TRIED_CURL%" neq "" goto _notice4_announce
+call :FindCurl _CURL_CURL
+if "%_CURL_CURL%" equ "" goto _notice4_announce
+call :FindTar _TAR_TAR
+if "%_TAR_TAR%" equ "" goto _notice4_announce
+echo *****************************************************
+echo *****************************************************
+echo **                                                 **
+echo ** The required build support is out of date.      **
+echo **                                                 **
+echo ** Using curl and tar to acquire and expand a      **
+echo ** local copy of the windows-build repository      **
+echo ** in archive form from:                           **
+echo **                                                 **
+echo **    https://github.com/simh/windows-build        **
+echo **                                                 **
+echo ** This may take a minute or so.  Please wait...   **
+echo **                                                 **
+echo *****************************************************
+echo *****************************************************
+pushd ..\..
+%_CURL_CURL% --location https://github.com/simh/windows-build/archive/windows-build.tar.gz --output windows-build.tar.gz
+%_TAR_TAR% -xzf windows-build.tar.gz
+del windows-build.tar.gz
+popd
+set _TRIED_CURL=1
+goto _check_build
+:_notice4_announce
 echo *****************************************************
 echo *****************************************************
 echo **  The required build support is out of date.     **
@@ -279,10 +324,10 @@ goto _ProjectInfo
 :_notice4
 echo *********************************
 echo *********************************
-echo **  Visual Studio Version: %_VC_VER%  **
-echo **  Visual Studio Version: %_VC_VER%  **
-echo **  Visual Studio Version: %_VC_VER%  **
-echo **  Visual Studio Version: %_VC_VER%  **
+echo **  Visual Studio Version: %_VC_VER%  Compiler Version: %_MSVC_VER% Toolset Version: %_MSVC_TOOLSET_VER% **
+echo **  Visual Studio Version: %_VC_VER%  Compiler Version: %_MSVC_VER% Toolset Version: %_MSVC_TOOLSET_VER% **
+echo **  Visual Studio Version: %_VC_VER%  Compiler Version: %_MSVC_VER% Toolset Version: %_MSVC_TOOLSET_VER% **
+echo **  Visual Studio Version: %_VC_VER%  Compiler Version: %_MSVC_VER% Toolset Version: %_MSVC_TOOLSET_VER% **
 echo *****************************************************
 echo *****************************************************
 echo **  Windows Build support for your Microsoft       **
@@ -340,13 +385,15 @@ rem several projects can start execution at almost the same time.
 rem
 SET ACTUAL_GIT_COMMIT_ID=
 SET ACTUAL_GIT_COMMIT_TIME=
+SET ACTUAL_GIT_COMMIT_EXTRAS=
 SET GIT_COMMIT_ID=
 SET GIT_COMMIT_TIME=
-for /F "usebackq tokens=1" %%i in (`git log -1 "--pretty=%%H"`) do SET ACTUAL_GIT_COMMIT_ID=%%i
+for /F "usebackq tokens=1" %%i in (`git update-index --refresh --`) do SET ACTUAL_GIT_COMMIT_EXTRAS=+uncommitted-changes
+for /F "usebackq tokens=1" %%i in (`git log -1 "--pretty=%%H"`) do SET ACTUAL_GIT_COMMIT_ID=%%i%ACTUAL_GIT_COMMIT_EXTRAS%
 for /F "usebackq tokens=1" %%i in (`git log -1 "--pretty=%%aI"`) do SET ACTUAL_GIT_COMMIT_TIME=%%i
 if exist ..\.git-commit-id for /F "usebackq tokens=2" %%i in (`findstr /C:SIM_GIT_COMMIT_ID ..\.git-commit-id`) do SET GIT_COMMIT_ID=%%i
 if exist ..\.git-commit-id for /F "usebackq tokens=2" %%i in (`findstr /C:SIM_GIT_COMMIT_TIME ..\.git-commit-id`) do SET GIT_COMMIT_TIME=%%i
-if "%ACTUAL_GIT_COMMIT_ID%" neq "%GIT_COMMIT_ID%" "%_GIT_GIT%" log -1 --pretty="SIM_GIT_COMMIT_ID %%H%%nSIM_GIT_COMMIT_TIME %%aI" >..\.git-commit-id
+if "%ACTUAL_GIT_COMMIT_ID%" neq "%GIT_COMMIT_ID%" "%_GIT_GIT%" log -1 --pretty="SIM_GIT_COMMIT_ID %ACTUAL_GIT_COMMIT_ID%%%nSIM_GIT_COMMIT_TIME %ACTUAL_GIT_COMMIT_TIME%" >..\.git-commit-id
 SET GIT_COMMIT_ID=%ACTUAL_GIT_COMMIT_ID%
 SET GIT_COMMIT_TIME=%ACTUAL_GIT_COMMIT_TIME%
 SET ACTUAL_GIT_COMMIT_ID=
@@ -391,15 +438,47 @@ set _GIT_TMP_=
 set _GIT_TMP=
 exit /B 0
 
+:FindTar
+set _TAR_TMP=%1
+call :WhichInPath tar.exe _TAR_TMP_
+set %_TAR_TMP%=%_TAR_TMP_%
+set _TAR_TMP_=
+set _TAR_TMP=
+exit /B 0
+
+:FindCurl
+set _CURL_TMP=%1
+call :WhichInPath curl.exe _CURL_TMP_
+set %_CURL_TMP%=%_CURL_TMP_%
+set _CURL_TMP_=
+set _CURL_TMP=
+exit /B 0
+
 :FindVCVersion
 call :WhichInPath cl.exe _VC_CL_
-for /f "tokens=3-9 delims=\" %%a in ("%_VC_CL_%") do call :VCCheck _VC_VER_NUM_ "%%a" "%%b" "%%c" "%%d" "%%e" "%%f" "%%g"
+for /f "tokens=3-10 delims=\" %%a in ("%_VC_CL_%") do call :VCCheck _VC_VER_NUM_ "%%a" "%%b" "%%c" "%%d" "%%e" "%%f" "%%g" "%%h"
 for /f "delims=." %%a in ("%_VC_VER_NUM_%") do set %1=%%a
+set _VC_CL_STDERR_=%TEMP%\cl_stderr%_TARGET%.tmp
+set VS_UNICODE_OUTPUT=
+"%_VC_CL_%" /? 2>"%_VC_CL_STDERR_%" 1>NUL 
+for /f "usebackq tokens=4-9" %%a in (`findstr Version "%_VC_CL_STDERR_%"`) do call :MSVCCheck _MSVC_VER_NUM_ "%%a" "%%b" "%%c" "%%d" "%%e"
+if "%4" NEQ "" set %4=%_MSVC_TOOLSET_%
+if "%_MSVC_TOOLSET_%" NEQ "" set _MSVC_TOOLSET_=v%_MSVC_TOOLSET_:~0,2%%_MSVC_TOOLSET_:~3,1%
+if "%3" NEQ "" set %3=%_MSVC_TOOLSET_%
+set _MSVC_TOOLSET_=
+set %2=%_MSVC_VER_NUM_%
+set _MSVC_VER_NUM_=
+for /f "delims=." %%a in ("%_MSVC_VER_NUM_%") do set %2=%%a
+del %_VC_CL_STDERR_%
+set _VC_CL_STDERR_=
 set _VC_CL=
 exit /B 0
 
+:: Scan the elements of the file path of cl.exe to determine the Visual
+:: Studio Version and potentially the toolset version
 :VCCheck
 set _VC_TMP=%1
+set _VC_TOOLSET=
 :_VCCheck_Next
 shift
 set _VC_TMP_=%~1
@@ -410,9 +489,35 @@ if "%_VC_NUM_%" neq "" set %_VC_TMP%=%~1
 if "%_VC_NUM_%" neq "" goto _VCCheck_Done
 goto _VCCheck_Next
 :_VCCheck_Done
+set _VC_TMP=_MSVC_TOOLSET_
+:_VCTSCheck_Next
+shift
+set _VC_TMP_=%~1
+if "%_VC_TMP_%" equ "" goto _VCTSCheck_Done
+call :IsNumeric _VC_NUM_ %_VC_TMP_%
+if "%_VC_NUM_%" neq "" set %_VC_TMP%=%~1
+if "%_VC_NUM_%" neq "" goto _VCTSCheck_Done
+goto _VCTSCheck_Next
+:_VCTSCheck_Done
 set _VC_TMP_=
 set _VC_TMP=
 set _VC_NUM_=
+exit /B 0
+
+:MSVCCheck
+set _MSVC_TMP=%1
+:_MSVCCheck_Next
+shift
+set _MSVC_TMP_=%~1
+if "%_MSVC_TMP_%" equ "" goto _VCCheck_Done
+call :IsNumeric _MSVC_NUM_ %_MSVC_TMP_%
+if "%_MSVC_NUM_%" neq "" set %_MSVC_TMP%=%~1
+if "%_MSVC_NUM_%" neq "" goto _MSVCCheck_Done
+goto _MSVCCheck_Next
+:_MSVCCheck_Done
+set _MSVC_TMP_=
+set _MSVC_TMP=
+set _MSVC_NUM_=
 exit /B 0
 
 :CheckDirectoryVCSupport

@@ -1,6 +1,6 @@
 /* nova_lp.c: NOVA line printer simulator
 
-   Copyright (c) 1993-2008, Robert M. Supnik
+   Copyright (c) 1993-2021, Robert M. Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -25,6 +25,7 @@
 
    lpt          line printer
 
+   09-Jun-21    RMS     Reverted use of ftell for pipe compatibility
    04-Jul-07    BKR     DEV_SET/CLR macros now used,
                         <FF>, <CR>, <LF> output character delay now contingent upon non-zero TIME value,
                         LPT can now be DISABLED
@@ -50,6 +51,7 @@ int32 lpt_stopioe = 0;                                  /* stop on error flag */
 int32 lpt (int32 pulse, int32 code, int32 AC);
 t_stat lpt_svc (UNIT *uptr);
 t_stat lpt_reset (DEVICE *dptr);
+t_stat lpt_attach (UNIT *uptr, CONST char *ptr);
 
 /* LPT data structures
 
@@ -80,7 +82,7 @@ DEVICE lpt_dev = {
     "LPT", &lpt_unit, lpt_reg, NULL,
     1, 10, 31, 1, 8, 8,
     NULL, NULL, &lpt_reset,
-    NULL, NULL, NULL,
+    NULL, &lpt_attach, NULL,
     &lpt_dib, DEV_DISABLE
     };
 
@@ -132,12 +134,12 @@ DEV_UPDATE_INTR ;
 if ((lpt_unit.flags & UNIT_ATT) == 0)                   /* attached? */
     return IORETURN (lpt_stopioe, SCPE_UNATT);
 fputc (uptr->buf, uptr->fileref);
-uptr->pos = ftell (uptr->fileref);
 if (ferror (uptr->fileref)) {
     sim_perror ("LPT I/O error");
     clearerr (uptr->fileref);
     return SCPE_IOERR;
     }
+uptr->pos = uptr->pos + 1;
 return SCPE_OK;
 }
 
@@ -152,4 +154,10 @@ DEV_CLR_DONE( INT_LPT ) ;
 DEV_UPDATE_INTR ;
 sim_cancel (&lpt_unit);                                 /* deactivate unit */
 return SCPE_OK;
+}
+
+t_stat lpt_attach (UNIT *uptr, CONST char *cptr)
+{
+sim_switches |= SWMASK('A');            /* position to EOF */
+return attach_unit (uptr, cptr);
 }

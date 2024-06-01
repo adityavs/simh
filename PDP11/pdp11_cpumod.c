@@ -1,6 +1,6 @@
 /* pdp11_cpumod.c: PDP-11 CPU model-specific features
 
-   Copyright (c) 2004-2016, Robert M Supnik
+   Copyright (c) 2004-2022, Robert M Supnik
 
    Permission is hereby granted, free of charge, to any person obtaining a
    copy of this software and associated documentation files (the "Software"),
@@ -25,6 +25,8 @@
 
    system       PDP-11 model-specific registers
 
+   19-Nov-22    RMS     Fixed byte access errors in PIRQ, STKLIM, CDR (Walter Mueller)
+   15-Sep-20    RMS     Fixed problem in KDJ11E programmable clock (Paul Koning)
    04-Mar-16    RMS     Fixed maximum memory sizes to exclude IO page
    14-Mar-16    RMS     Modified to keep cpu_memsize in sync with MEMSIZE
    06-Jun-13    RMS     Fixed change model to set memory size last
@@ -47,14 +49,22 @@
 
 #include "pdp11_defs.h"
 #include "pdp11_cpumod.h"
-#include <time.h>
 
-/* Byte write macros for system registers */
+/* Byte write macros for system registers
 
+   EVN_IGN      byte writes to the even byte are ignored
+   ODD_IGN      byte writes to the odd byte are ignored
+   ODD_SHF      byte writes to the odd byte zero the even byte
+   ODD_MRG      byte writes write appropriate byte
+*/
+
+#define EVN_IGN(cur) \
+    if ((access == WRITEB) && ((pa & 1) == 0)) \
+        return SCPE_OK
 #define ODD_IGN(cur) \
     if ((access == WRITEB) && (pa & 1)) \
         return SCPE_OK
-#define ODD_WO(cur) \
+#define ODD_SHF(cur) \
     if ((access == WRITEB) && (pa & 1)) \
         cur = cur << 8
 #define ODD_MRG(prv,cur) \
@@ -83,7 +93,7 @@ int32 uba_last = 0;                                     /* UBA last mapped */
 int32 ub_map[UBM_LNT_LW] = { 0 };                       /* UBA map array */
 int32 toy_state = 0;
 uint8 toy_data[TOY_LNT] = { 0 };
-static int32 clk_tps_map[4] = { 60, 60, 50, 800 };
+static int32 clk_tps_map[4] = { 0, 50, 60, 800 };       /* 0 = use BEVENT */
 
 extern int32 R[8];
 extern int32 STKLIM, PIRQ;
@@ -123,6 +133,9 @@ void toy_write (int32 bit);
 uint8 toy_set (int32 val);
 t_stat sys_set_jclk_dflt (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
 t_stat sys_show_jclk_dflt (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
+static t_stat sys_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr);
+static const char *sys_description (DEVICE *dptr);
+
 
 extern t_stat PSW_rd (int32 *data, int32 addr, int32 access);
 extern t_stat PSW_wr (int32 data, int32 addr, int32 access);
@@ -190,13 +203,13 @@ CPUTAB cpu_tab[MOD_MAX] = {
        MFPT_44, PAR_1144, PDR_1144, MM0_1144, MM3_1144 },
     { "11/45", SOP_1145, OPT_1145, UNIMEMSIZE, PSW_1145,
        0, PAR_1145, PDR_1145, MM0_1145, MM3_1145 },
+    { "11/53", SOP_1153, OPT_1153, MAXMEMSIZE, PSW_J,
+       MFPT_J, PAR_J, PDR_J, MM0_J, MM3_J },
     { "11/60", SOP_1160, OPT_1160, UNIMEMSIZE, PSW_1160,
        0, PAR_1160, PDR_1160, MM0_1160, 0 },
     { "11/70", SOP_1170, OPT_1170, MAXMEMSIZE, PSW_1170,
        0, PAR_1170, PDR_1170, MM0_1170, MM3_1170 },
     { "11/73", SOP_1173, OPT_1173, MAXMEMSIZE, PSW_J,
-       MFPT_J, PAR_J, PDR_J, MM0_J, MM3_J },
-    { "11/53", SOP_1153, OPT_1153, MAXMEMSIZE, PSW_J,
        MFPT_J, PAR_J, PDR_J, MM0_J, MM3_J },
     { "11/73B", SOP_1173B, OPT_1173B, MAXMEMSIZE, PSW_J,
        MFPT_J, PAR_J, PDR_J, MM0_J, MM3_J },
@@ -245,7 +258,7 @@ CNFTAB cnf_tab[] = {
 static const char *opt_name[] = {
     "Unibus", "Qbus", "EIS", "NOEIS", "FIS", "NOFIS",
     "FPP", "NOFPP", "CIS", "NOCIS", "MMU", "NOMMU",
-    "RH11", "RH70", "PARITY", "NOPARITY", "Unibus map", "No map", 
+    "unused", "unused", "PARITY", "NOPARITY", "Unibus map", "No map", 
     "BEVENT enabled", "BEVENT disabled", NULL
     };
 
@@ -263,33 +276,73 @@ static const char *jcsr_val[4] = {
 UNIT sys_unit = { UDATA (NULL, 0, 0) };
 
 REG sys_reg[] = {
-    { ORDATA (SR, SR, 16) },
-    { ORDATA (DR, DR, 16) },
-    { ORDATA (MEMERR, MEMERR, 16) },
-    { ORDATA (CCR, CCR, 16) },
-    { ORDATA (MAINT, MAINT, 16) },
-    { ORDATA (HITMISS, HITMISS, 16) },
-    { ORDATA (CPUERR, CPUERR, 16) },
-    { ORDATA (MBRK, MBRK, 16) },
-    { ORDATA (WCS, WCS, 16) },
-    { ORDATA (SYSID, SYSID, 16) },
-    { ORDATA (JCSR, JCSR, 16) },
+    { ORDATAD (SR, SR, 16, "switch or configuration register ("
+                           "11/04, 11/05, 11/20, "
+                           "11/23+, 11/34, 11/40, "
+                           "11/44, 11/45, 11/60, "
+                           "11/70, 11/73B, 11/83, "
+                           "11/84, 11/93, 11/94)") },
+    { ORDATAD (DR, DR, 16, "display register or board LEDs ("
+                           "11/04, 11/05, 11/20, "
+                           "1123+, 11/24, 11/34, "
+                           "11/70, 11/73B, 11/83, "
+                           "11/84, 11/93, 11/94)") },
+    { ORDATAD (MEMERR, MEMERR, 16, "memory error register ("
+                           "11/44, 11/60, 11/70, "
+                           "11/53, 11/73, 11/73B, "
+                           "11/83, 11/84, 11/93, "
+                           "11/94)") },
+    { ORDATAD (CCR, CCR, 16, "cache control register ("
+                           "11/44, 11/60, 11/70, "
+                           "11/53, 11/73, 11/73B, "
+                           "11/83, 11/84, 11/93, "
+                           "11/94)") },
+    { ORDATAD (MAINT, MAINT, 16, "maintenance register ("
+                           "11/23+, 11/44, 11/70, "
+                           "11/53, 11/73, 11/73B, "
+                           "11/83, 11/84, 11/93, "
+                           "11/94)") },
+    { ORDATAD (HITMISS, HITMISS, 16, "hit/miss register ("
+                           "11/44, 11/60, 11/70, "
+                           "11/53, 11/73, 11/73B, "
+                           "11/83, 11/84, 11/93, "
+                           "11/94)") },
+    { ORDATAD (CPUERR, CPUERR, 16, "CPU error register ("
+                           "11/24, 11/44, 11/70, "
+                           "11/53, 11/73, 11/73B, "
+                           "11/83, 11/84, 11/93, "
+                           "11/94)") },
+    { ORDATAD (MBRK, MBRK, 16, "microbreak register ("
+                           "11/45, 11/70)") },
+    { ORDATAD (WCS, WCS, 16, "WCS control (11/60)") },
+    { ORDATAD (SYSID, SYSID, 16, "system ID (11/70 - default = 1234 hex)") },
+    { ORDATAD (JCSR, JCSR, 16, "board control/status ("
+                           "11/53, 11/73B, 11/83, "
+                           "11/84, 11/93, 11/94)") },
     { ORDATA (JCSR_DFLT, JCSR_dflt, 16), REG_HRO },
-    { ORDATA (JPCR, JPCR, 16) },
-    { ORDATA (JASR, JASR, 16) },
-    { ORDATA (UDCR, UDCR, 16) },
-    { ORDATA (UDDR, UDDR, 16) },
-    { ORDATA (UCSR, UCSR, 16) },
-    { ORDATA (ULAST, uba_last, 23) },
-    { BRDATA (UBMAP, ub_map, 8, 22, UBM_LNT_LW) },
+    { ORDATAD (JPCR, JPCR, 16, "page control register ("
+                           "11/23+, 11/53, 11/73B, "
+                           "11/83, 11/84, 11/93, "
+                           "11/94)") },
+    { ORDATAD (JASR, JASR, 16, "additional status ("
+                           "11/93, 11/94)") },
+    { ORDATAD (UDCR, UDCR, 16, "Unibus map diag control ("
+                           "11/84, 11/94)") },
+    { ORDATAD (UDDR, UDDR, 16, "Unibus map diag data ("
+                           "11/84, 11/94)") },
+    { ORDATAD (UCSR, UCSR, 16, "Unibus map control/status ("
+                           "11/84, 11/94)") },
+    { ORDATAD (ULAST, uba_last, 23, "last Unibus map result ("
+                           "11/24)") },
+    { BRDATAD (UBMAP, ub_map, 8, 22, UBM_LNT_LW, "UBA map array") },
     { DRDATA (TOY_STATE, toy_state, 6), REG_HRO },
     { BRDATA (TOY_DATA, toy_data, 8, 8, TOY_LNT), REG_HRO },
     { NULL}
     };
 
 MTAB sys_mod[] = {
-    { MTAB_XTD|MTAB_VDV|MTAB_NMO, 0, "JCLK_DFLT", "JCLK_DFLT",
-      &sys_set_jclk_dflt, &sys_show_jclk_dflt },
+    { MTAB_XTD|MTAB_VDV|MTAB_NMO, 0, "JCLK_DFLT", "JCLK_DFLT={LINE|50HZ|60HZ|800HZ}",
+      &sys_set_jclk_dflt, &sys_show_jclk_dflt, NULL, "J11 default clock frequency" },
     { 0 }
     };
 
@@ -299,7 +352,8 @@ DEVICE sys_dev = {
     NULL, NULL, &sys_reset,
     NULL, NULL, NULL,
     NULL, 0, 0,
-    NULL, NULL, NULL
+    NULL, NULL, NULL,
+    &sys_help, NULL, NULL, &sys_description
     };
 
 /* Switch and display registers - many */
@@ -431,7 +485,8 @@ switch ((pa >> 1) & 017) {                              /* decode pa<4:1> */
         return SCPE_OK;
 
     case 015:                                           /* PIRQ */
-        ODD_WO (data);
+        EVN_IGN (data);
+        ODD_SHF (data);
         put_PIRQ (data);
         return SCPE_OK;
         }
@@ -467,12 +522,14 @@ t_stat CPU45_wr (int32 data, int32 pa, int32 access)
 switch ((pa >> 1) & 017) {                              /* decode pa<4:1> */
 
     case 015:                                           /* PIRQ */
-        ODD_WO (data);
+        EVN_IGN (data);
+        ODD_SHF (data);
         put_PIRQ (data);
         return SCPE_OK;
 
     case 016:                                           /* STKLIM */
-        ODD_WO (data);
+        EVN_IGN (data);
+        ODD_SHF (data);
         STKLIM = data & STKLIM_RW;
         return SCPE_OK;
         }                                               /* end switch pa */
@@ -546,7 +603,8 @@ switch ((pa >> 1) & 017) {                              /* decode pa<4:1> */
         return SCPE_OK;
 
     case 016:                                           /* STKLIM */
-        ODD_WO (data);
+        EVN_IGN (data);
+        ODD_SHF (data);
         STKLIM = data & STKLIM_RW;
         return SCPE_OK;
         }                                               /* end switch pa */
@@ -617,12 +675,22 @@ switch ((pa >> 1) & 017) {                              /* decode pa<4:1> */
 return SCPE_NXM;                                        /* unimplemented */
 }
 
+/* From Walter Mueller: MEMERR is always written using the standard data
+   on the bus: the whole word for DATO, the high byte for DATOB odd,
+   and the low byte with DATOB even. The simulator always puts a byte
+   in the low 8 bits, so for an odd byte reference, it must be shifted
+   to the high byte.
+*/
+
 t_stat CPU70_wr (int32 data, int32 pa, int32 access)
 {
 switch ((pa >> 1) & 017) {                              /* decode pa<4:1> */
+    case 000:
+    case 001:
+        return SCPE_OK;                                 /* error addr */
 
     case 002:                                           /* MEMERR */
-        ODD_WO (data);
+        ODD_SHF (data);
         MEMERR = MEMERR & ~data;
         return SCPE_OK;
 
@@ -643,6 +711,9 @@ switch ((pa >> 1) & 017) {                              /* decode pa<4:1> */
     case 011:                                           /* high size */
         return SCPE_OK;
 
+    case 012:                                           /* system ID */
+        return SCPE_OK;
+
     case 013:                                           /* CPUERR */
         CPUERR = 0;
         return SCPE_OK;
@@ -653,12 +724,14 @@ switch ((pa >> 1) & 017) {                              /* decode pa<4:1> */
         return SCPE_OK;
 
     case 015:                                           /* PIRQ */
-        ODD_WO (data);
+        EVN_IGN (data);
+        ODD_SHF (data);
         put_PIRQ (data);
         return SCPE_OK;
 
     case 016:                                           /* STKLIM */
-        ODD_WO (data);
+        EVN_IGN (data);
+        ODD_SHF (data);
         STKLIM = data & STKLIM_RW;
         return SCPE_OK;
         }                                               /* end switch pa */
@@ -735,7 +808,8 @@ switch ((pa >> 1) & 017) {                              /* decode pa<4:1> */
         return SCPE_OK;
 
     case 015:                                           /* PIRQ */
-        ODD_WO (data);
+        EVN_IGN (data);
+        ODD_SHF (data);
         put_PIRQ (data);
         return SCPE_OK;
         }                                               /* end switch pa */
@@ -774,12 +848,14 @@ switch ((pa >> 1) & 03) {                               /* decode pa<2:1> */
         ODD_MRG (JPCR, data);
         JPCR = data & PCRFB_RW;
         return SCPE_OK;
+
     case 1:                                             /* MAINT */
         ODD_MRG (MAINT, data);
         MAINT = data;
         return SCPE_OK;
+
     case 2:                                             /* CDR */
-        ODD_WO (data);
+        ODD_IGN (data);
         DR = data & CDRFB_WR;
         return SCPE_OK;
         }
@@ -826,7 +902,7 @@ switch ((pa >> 1) & 03) {                               /* decode pa<2:1> */
             clk_fnxm = 1;
         else clk_fnxm = 0;
         t = CSRJ_LTCSEL (JCSR);                         /* get freq sel */
-        if (t)
+        if (t != 0)
             clk_tps = clk_tps_map[t];
         else clk_tps = clk_default;
         return SCPE_OK;
@@ -837,7 +913,7 @@ switch ((pa >> 1) & 03) {                               /* decode pa<2:1> */
         return SCPE_OK;
 
     case 2:                                             /* CDR */
-        ODD_WO (data);
+        ODD_IGN (data);
         DR = data & CDRJB_WR;
         return SCPE_OK;
         }
@@ -917,7 +993,7 @@ switch ((pa >> 1) & 03) {                               /* decode pa<2:1> */
             clk_fnxm = 1;
         else clk_fnxm = 0;
         t = CSRJ_LTCSEL (JCSR);                         /* get freq sel */
-        if (t)
+        if (t != 0)
             clk_tps = clk_tps_map[t];
         else clk_tps = clk_default;
         return SCPE_OK;
@@ -928,7 +1004,7 @@ switch ((pa >> 1) & 03) {                               /* decode pa<2:1> */
         return SCPE_OK;
 
     case 2:                                             /* CDR */
-        ODD_WO (data);
+        ODD_IGN (data);
         DR = data & CDRJE_WR;
         return SCPE_OK;
 
@@ -1023,18 +1099,22 @@ return SCPE_NXM;
 
 int32 toy_read (void)
 {
-time_t curr;
-struct tm *ctm;
 int32 bit;
 
 if (toy_state == 0) {
-    curr = time (NULL);                                 /* get curr time */
+    struct timespec now;
+    time_t curr;
+    struct tm *ctm;
+
+    sim_rtcn_get_time (&now, 0);
+    curr = (time_t)now.tv_sec;
+
     if (curr == (time_t) -1)                            /* error? */
         return 0;
     ctm = localtime (&curr);                            /* decompose */
     if (ctm == NULL)                                    /* error? */
         return 0;
-    toy_data[TOY_HSEC] = 0x50;
+    toy_data[TOY_HSEC] = toy_set ((now.tv_nsec + 5000000) / 10000000);
     toy_data[TOY_SEC] = toy_set (ctm->tm_sec);
     toy_data[TOY_MIN] = toy_set (ctm->tm_min);
     toy_data[TOY_HR] = toy_set (ctm->tm_hour);
@@ -1122,8 +1202,17 @@ t_stat cpu_set_opt (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 {
 if (cptr)
     return SCPE_ARG;
-if ((val & cpu_tab[cpu_model].opt) == 0)
-    return SCPE_ARG;
+if ((val & cpu_tab[cpu_model].opt) == 0) {
+    uint32 i;
+
+    for (i = 0; opt_name[2 * i] != NULL; i++) {
+        if ((val >> i) & 1)
+            break;
+        }
+    return sim_messagef (SCPE_ARG, "The %s option can't be enabled on a %s CPU\n", 
+                                ((val >> i) & 1)? opt_name[2 * i] : "unknown", 
+                                cpu_tab[cpu_model].name);
+    }
 cpu_opt = cpu_opt | val;
 return SCPE_OK;
 }
@@ -1132,8 +1221,17 @@ t_stat cpu_clr_opt (UNIT *uptr, int32 val, CONST char *cptr, void *desc)
 {
 if (cptr)
     return SCPE_ARG;
-if ((val & cpu_tab[cpu_model].opt) == 0)
-    return SCPE_ARG;
+if ((val & cpu_tab[cpu_model].opt) == 0) {
+    uint32 i;
+
+    for (i = 0; opt_name[2 * i] != NULL; i++) {
+        if ((val >> i) & 1)
+            break;
+        }
+    return sim_messagef (SCPE_ARG, "The %s option can't be disabled on a %s CPU\n", 
+                                ((val >> i) & 1)? opt_name[2 * i] : "unknown", 
+                                cpu_tab[cpu_model].name);
+    }
 cpu_opt = cpu_opt & ~val;
 return SCPE_OK;
 }
@@ -1182,6 +1280,7 @@ if (opt & BUS_U)                                        /* Unibus variant? */
 else if (MEMSIZE <= UNIMEMSIZE)                         /* 18b Qbus devices? */
     mask = DEV_QBUS | DEV_Q18;
 else mask = DEV_QBUS;                                   /* must be 22b */
+mask |= DEV_MBUS;                                       /* leave Massbus devices */
 for (i = 0; (dptr = sim_devices[i]) != NULL; i++) {
     if ((dptr->flags & DEV_DISABLE) &&                  /* disable-able? */
         !(dptr->flags & DEV_DIS) &&                     /* enabled? */
@@ -1247,5 +1346,25 @@ t_stat sys_show_jclk_dflt (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
 if (CPUT (CPUT_JB|CPUT_JE))
     fprintf (st, "JCLK default=%s\n", jcsr_val[CSRJ_LTCSEL (JCSR_dflt)]);
 else fprintf (st, "Not implemented\n");
+return SCPE_OK;
+}
+
+const char *sys_description (DEVICE *dptr)
+{
+return "PDP-11 model options";
+}
+
+t_stat sys_help (FILE *st, DEVICE *dptr, UNIT *uptr, int32 flag, const char *cptr)
+{
+fprintf (st, "The %s (%s) device help\n\n", dptr->description (dptr), dptr->name);
+fprintf (st, "The SYSTEM device implements registers that vary among CPU types:\n");
+fprint_reg_help (st, dptr);
+fprintf (st, "\n");
+fprintf (st, "For the 11/83, 11/84, 11/93, and 11/94, the user can set the default value\n");
+fprintf (st, "of the clock frequency:\n\n");
+fprint_set_help (st, dptr);
+fprintf (st, "\n");
+fprintf (st, "The user can check the default value with:\n");
+fprint_show_help (st, dptr);
 return SCPE_OK;
 }

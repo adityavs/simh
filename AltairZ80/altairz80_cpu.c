@@ -1,6 +1,6 @@
 /*  altairz80_cpu.c: MITS Altair CPU (8080 and Z80)
 
-    Copyright (c) 2002-2014, Peter Schorn
+    Copyright (c) 2002-2023, Peter Schorn
 
     Permission is hereby granted, free of charge, to any person obtaining a
     copy of this software and associated documentation files (the "Software"),
@@ -27,19 +27,24 @@
     Code for Z80 CPU from Frank D. Cringle ((c) 1995 under GNU license)
 */
 
-#include "m68k.h"
-#include <ctype.h>
+#include "m68k/m68k.h"
 
 #define SWITCHCPU_DEFAULT 0xfd
 
 /* Debug flags */
 #define IN_MSG          (1 << 0)
 #define OUT_MSG         (1 << 1)
+#define INT_MSG         (1 << 2)
 
 #define PCQ_SIZE        64                      /* must be 2**n                     */
 #define PCQ_SIZE_LOG2   6                       /* log2 of PCQ_SIZE                 */
 #define PCQ_MASK        (PCQ_SIZE - 1)
 #define PCQ_ENTRY(PC)   if (pcq[pcq_p] != (PC)) { pcq[pcq_p = (pcq_p - 1) & PCQ_MASK] = (PC); }
+
+#define INST_MAX_BYTES  4                       /* instruction max bytes */
+
+#define IFF1    1                               /* Interrupt flip-flop 1 */
+#define IFF2    2                               /* Interrupt flip-flop 2 */
 
 #define FLAG_C  1
 #define FLAG_N  2
@@ -50,6 +55,7 @@
 
 #define SETFLAG(f,c)    AF = (c) ? AF | FLAG_ ## f : AF & ~FLAG_ ## f
 #define TSTFLAG(f)      ((AF & FLAG_ ## f) != 0)
+#define TSTFLAG2(a, f)  ((a & FLAG_ ## f) != 0)
 
 #define LOW_DIGIT(x)     ((x) & 0xf)
 #define HIGH_DIGIT(x)    (((x) >> 4) & 0xf)
@@ -96,8 +102,7 @@
     if (cond) {                                             \
         PCQ_ENTRY(PCX);                                     \
         PC = GET_WORD(PC);                                  \
-    }                                                       \
-    else {                                                  \
+    } else {                                                \
         PC += 2;                                            \
     }                                                       \
 }
@@ -110,8 +115,7 @@
         PCQ_ENTRY(PCX);                                     \
         PC = adrr;                                          \
         tStates += 17;                                      \
-    }                                                       \
-    else {                                                  \
+    } else {                                                \
         PC += 2;                                            \
         tStates += (chiptype == CHIP_TYPE_8080 ? 11 : 10);  \
     }                                                       \
@@ -143,6 +147,9 @@ extern uint8 MOPT[MAXBANKSIZE];
 extern t_stat sim_instr_8086(void);
 extern void cpu8086reset(void);
 
+extern unsigned int m68k_cpu_read_byte_raw(unsigned int address);
+void m68k_cpu_write_byte_raw(unsigned int address, unsigned int value);
+
 /* function prototypes */
 static t_stat cpu_set_switcher  (UNIT *uptr, int32 value, CONST char *cptr, void *desc);
 static t_stat cpu_reset_switcher(UNIT *uptr, int32 value, CONST char *cptr, void *desc);
@@ -157,20 +164,28 @@ static t_stat cpu_set_nonbanked     (UNIT *uptr, int32 value, CONST char *cptr, 
 static t_stat cpu_set_ramtype       (UNIT *uptr, int32 value, CONST char *cptr, void *desc);
 static t_stat cpu_set_chiptype      (UNIT *uptr, int32 value, CONST char *cptr, void *desc);
 static t_stat cpu_set_size          (UNIT *uptr, int32 value, CONST char *cptr, void *desc);
+static t_stat set_size              (uint32 size, t_bool unmap);
+static t_stat m68k_set_chiptype     (UNIT * uptr, int32 value, CONST char* cptr, void* desc);
 static t_stat cpu_set_memory        (UNIT *uptr, int32 value, CONST char *cptr, void *desc);
+static t_stat cpu_resize_memory     (UNIT *uptr, int32 value, CONST char *cptr, void *desc);
+static t_stat cpu_set_hist          (UNIT *uptr, int32 val, CONST char *cptr, void *desc);
+static t_stat cpu_show_hist         (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 static t_stat cpu_clear_command     (UNIT *uptr, int32 value, CONST char *cptr, void *desc);
-static void cpu_clear(void);
+static void cpu_clear(t_bool unmap);
 static t_stat cpu_show              (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 static t_stat chip_show             (FILE *st, UNIT *uptr, int32 val, CONST void *desc);
 static t_stat cpu_ex(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw);
 static t_stat cpu_dep(t_value val, t_addr addr, UNIT *uptr, int32 sw);
 static t_stat cpu_reset(DEVICE *dptr);
 static t_bool cpu_is_pc_a_subroutine_call (t_addr **ret_addrs);
+static t_stat cpu_hex_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag);
 static t_stat sim_instr_mmu(void);
 static uint32 GetBYTE(register uint32 Addr);
 static void PutWORD(register uint32 Addr, const register uint32 Value);
 static void PutBYTE(register uint32 Addr, const register uint32 Value);
 static const char* cpu_description(DEVICE *dptr);
+static t_stat cpu_cmd_memory(int32 flag, CONST char *cptr);
+static t_stat cpu_cmd_reg(int32 flag, CONST char *cptr);
 void out(const uint32 Port, const uint32 Value);
 uint32 in(const uint32 Port);
 void altairz80_init(void);
@@ -186,11 +201,13 @@ uint32 getClockFrequency(void);
 void setClockFrequency(const uint32 Value);
 uint32 getCommon(void);
 uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
-        int32 (*routine)(const int32, const int32, const int32), uint8 unmap);
+                        int32 (*routine)(const int32, const int32, const int32), const char* name, uint8 unmap);
 
 void PutBYTEExtended(register uint32 Addr, const register uint32 Value);
 uint32 GetBYTEExtended(register uint32 Addr);
 void cpu_raise_interrupt(uint32 irq);
+
+const char* handlerNameForPort(const int32 port);
 
 /*  CPU data structures
     cpu_dev CPU device descriptor
@@ -219,6 +236,7 @@ UNIT cpu_unit = {
         int32 DE1_S;                                /* alternate DE register                        */
         int32 HL1_S;                                /* alternate HL register                        */
         int32 IFF_S;                                /* Interrupt Flip Flop                          */
+        int32 IM_S;                                 /* Interrupt Mode register                      */
         int32 IR_S;                                 /* Interrupt (upper) / Refresh (lower) register */
         int32 AX_S;                                 /* AX register (8086)                           */
         int32 BX_S;                                 /* BX register (8086)                           */
@@ -235,8 +253,12 @@ UNIT cpu_unit = {
         int32 IP_S;                                 /* IP register (8086)                           */
         int32 FLAGS_S;                              /* flags register (8086)                        */
         int32 SR                = 0;                /* switch register                              */
+        uint32 nmiInterrupt     = 0;                /* Non-maskable Interrupt                       */
+        uint32 vectorInterrupt  = 0;                /* VI0-7 Vector Interrupt bitfield              */
+        uint8 dataBus[MAX_INT_VECTORS];             /* Vector Interrupt data bus value              */
 static  int32 bankSelect        = 0;                /* determines selected memory bank              */
 static  uint32 common           = 0xc000;           /* addresses >= 'common' are in common memory   */
+static  uint32 common_low       = 0;                /* Common area is in low memory                 */
 static  uint32 previousCapacity = MAXBANKSIZE;      /* safe for previous memory capacity            */
 static  uint32 clockFrequency   = 0;                /* in kHz, 0 means as fast as possible          */
 static  uint32 sliceLength      = 10;               /* length of time-slice for CPU speed           */
@@ -246,20 +268,47 @@ static  uint16 pcq[PCQ_SIZE]    = { 0 };            /* PC queue                 
 static  int32 pcq_p             = 0;                /* PC queue ptr                                 */
 static  REG *pcq_r              = NULL;             /* PC queue reg ptr                             */
 
-uint32 m68k_registers[M68K_REG_CPU_TYPE + 1];       /* M68K CPU registers                           */
+#define HIST_MIN        16
+#define HIST_MAX        8192
 
+typedef struct {
+    uint8 valid;
+    uint16 af;
+    uint16 bc;
+    uint16 de;
+    uint16 hl;
+    t_addr pc;
+    t_addr sp;
+    uint16 af1;
+    uint16 bc1;
+    uint16 de1;
+    uint16 hl1;
+    uint16 ix;
+    uint16 iy;
+    t_value op[INST_MAX_BYTES];
+} insthist_t;
+
+static  uint32 hst_p = 0;                           /* history pointer          */
+static  uint32 hst_lnt = 0;                         /* history length           */
+static  insthist_t *hst = NULL;                     /* instruction history      */
+
+uint32 m68k_registers[M68K_REG_CPU_TYPE + 1];       /* M68K CPU registers       */
+uint32 mmiobase = 0xff0000;                         /* M68K MMIO base address   */
+uint32 mmiosize = 0x10000;                          /* M68K MMIO window size    */
+uint32 m68kvariant = M68K_CPU_TYPE_68000;
 
 /* data structure for IN/OUT instructions */
 struct idev {
     int32 (*routine)(const int32, const int32, const int32);
+    const char* name;
 };
 
-static  int32 switcherPort      = SWITCHCPU_DEFAULT;
-static struct idev oldSwitcherDevice = { NULL };
+static  int32 switcherPort            = SWITCHCPU_DEFAULT;
+static  struct idev oldSwitcherDevice = { NULL, NULL };
 
 // CPU_INDEX_8080 is defined in altairz80_defs.h
-#define CPU_INDEX_8086  26
-#define CPU_INDEX_M68K  53
+#define CPU_INDEX_8086  27
+#define CPU_INDEX_M68K  54
 
 REG cpu_reg[] = {
     // 8080 and Z80 registers
@@ -278,163 +327,180 @@ REG cpu_reg[] = {
 
     // Z80 registers
     { HRDATAD (IX,      IX_S,               16, "Z80 IX register")
-    }, /*  8 */
-    { HRDATAD (IY,      IY_S,               16, "Z80 IY register")
-    }, /*  9 */
-    { HRDATAD (AF1,     AF1_S,              16, "Z80 Alternate Accumulator Flag register")
-    }, /* 10 */
-    { HRDATAD (BC1,     BC1_S,              16, "Z80 Alternate BC register")
-    }, /* 11 */
-    { HRDATAD (DE1,     DE1_S,              16, "Z80 Alternate DE register")
-    }, /* 12 */
-    { HRDATAD (HL1,     HL1_S,              16, "Z80 Alternate HL register")
-    }, /* 13 */
-    { GRDATAD (IFF,     IFF_S, 2, 2, 0,         "Z80 Interrupt Flip Flop register")
     }, /*  6 */
-    { HRDATAD (IR,      IR_S,               16,  "Z80 Interrupt (upper) / Refresh (lower) register")
+    { HRDATAD (IY,      IY_S,               16, "Z80 IY register")
     }, /*  7 */
+    { HRDATAD (AF1,     AF1_S,              16, "Z80 Alternate Accumulator Flag register")
+    }, /*  8 */
+    { HRDATAD (BC1,     BC1_S,              16, "Z80 Alternate BC register")
+    }, /*  9 */
+    { HRDATAD (DE1,     DE1_S,              16, "Z80 Alternate DE register")
+    }, /* 10 */
+    { HRDATAD (HL1,     HL1_S,              16, "Z80 Alternate HL register")
+    }, /* 11 */
+    { GRDATAD (IFF,     IFF_S, 2, 2, 0,         "Z80 Interrupt Flip Flop register")
+    }, /* 12 */
+    { HRDATAD (IM,      IM_S,               2,  "Z80 Interrupt Mode register")
+    }, /* 13 */
+    { HRDATAD (IR,      IR_S,               16, "Z80 Interrupt (upper) / Refresh (lower) register")
+    }, /* 14 */
+
 
     // 8086 registers
     { HRDATAD (AX,      AX_S,               16, "8086 AX register")
-    }, /* 14 8086                       */
+    }, /* 15 8086                       */
     { GRDATAD (AL,      AX_S, 16,           8, 0, "8086 low bits of AX register")
-    }, /* 15 8086, low 8 bits of AX     */
+    }, /* 16 8086, low 8 bits of AX     */
     { GRDATAD (AH,      AX_S, 16,           8, 8, "8086 high bits of AX register")
-    }, /* 16 8086, high 8 bits of AX    */
+    }, /* 17 8086, high 8 bits of AX    */
     { HRDATAD (BX,      BX_S,               16, "8086 BX register")
-    }, /* 17 8086                       */
+    }, /* 18 8086                       */
     { GRDATAD (BL,      BX_S, 16,           8, 0, "8086 low bits of BX register")
-    }, /* 18 8086, low 8 bits of BX     */
+    }, /* 19 8086, low 8 bits of BX     */
     { GRDATAD (BH,      BX_S, 16,           8, 8, "8086 high bits of BX register")
-    }, /* 19 8086, high 8 bits of BX    */
+    }, /* 20 8086, high 8 bits of BX    */
     { HRDATAD (CX,      CX_S,               16, "8086 CX register")
-    }, /* 20 8086                       */
+    }, /* 21 8086                       */
     { GRDATAD (CL,      CX_S, 16,           8, 0, "8086 low bits of CX register")
-    }, /* 21 8086, low 8 bits of CX     */
+    }, /* 22 8086, low 8 bits of CX     */
     { GRDATAD (CH,      CX_S, 16,           8, 8, "8086 high bits of CX register")
-    }, /* 22 8086, high 8 bits of CX    */
+    }, /* 23 8086, high 8 bits of CX    */
     { HRDATAD (DX,      DX_S,               16, "8086 DX register")
-    }, /* 23 8086                       */
+    }, /* 24 8086                       */
     { GRDATAD (DL,      DX_S, 16,           8, 0, "8086 low bits of DX register")
-    }, /* 24 8086, low 8 bits of DX     */
+    }, /* 25 8086, low 8 bits of DX     */
     { GRDATAD (DH,      DX_S, 16,           8, 8, "8086 high bits of DX register")
-    }, /* 25 8086, high 8 bits of DX    */
+    }, /* 26 8086, high 8 bits of DX    */
     { HRDATAD (PCX,     PCX_S,              16 + MAXBANKSLOG2, "8086 Program Counter register")
-    }, /* 26 8086, Program Counter      */
+    }, /* 27 8086, Program Counter      */
     { HRDATAD (SPX,     SPX_S,              16, "8086 Stack Pointer register")
-    }, /* 27 8086, Stack Pointer        */
+    }, /* 28 8086, Stack Pointer        */
     { HRDATAD (BP,      BP_S,               16, "8086 Base Pointer register")
-    }, /* 28 8086, Base Pointer         */
+    }, /* 29 8086, Base Pointer         */
     { HRDATAD (SI,      SI_S,               16, "8086 Source Index register")
-    }, /* 29 8086, Source Index         */
+    }, /* 30 8086, Source Index         */
     { HRDATAD (DI,      DI_S,               16, "8086 Destination Index register")
-    }, /* 30 8086, Destination Index    */
+    }, /* 31 8086, Destination Index    */
     { HRDATAD (CS,      CS_S,               16, "8086 Code Segment register")
-    }, /* 31 8086, Code Segment         */
+    }, /* 32 8086, Code Segment         */
     { HRDATAD (DS,      DS_S,               16, "8086 Data Segment register")
-    }, /* 32 8086, Data Segment         */
+    }, /* 33 8086, Data Segment         */
     { HRDATAD (ES,      ES_S,               16, "8086 Extra Segment register")
-    }, /* 33 8086, Extra Segment        */
+    }, /* 34 8086, Extra Segment        */
     { HRDATAD (SS,      SS_S,               16, "8086 Stack Segment register")
-    }, /* 34 8086, Stack Segment        */
+    }, /* 35 8086, Stack Segment        */
     { HRDATAD (FLAGS,   FLAGS_S,            16, "8086 Flag register")
-    }, /* 35 8086, FLAGS                */
+    }, /* 36 8086, FLAGS                */
     { HRDATAD (IP,      IP_S,               16, "8086 Instruction Pointer register"),
-        REG_RO          }, /* 36 8086, set via PC           */
+        REG_RO          }, /* 37 8086, set via PC           */
 
     // M68K registers
     { HRDATAD (M68K_D0,         m68k_registers[M68K_REG_D0],        32, "M68K D0 register"),
-    }, /* 37 M68K, D0                   */
+    }, /* 38 M68K, D0                   */
     { HRDATAD (M68K_D1,         m68k_registers[M68K_REG_D1],        32, "M68K D1 register"),
-    }, /* 38 M68K, D1                   */
+    }, /* 39 M68K, D1                   */
     { HRDATAD (M68K_D2,         m68k_registers[M68K_REG_D2],        32, "M68K D2 register"),
-    }, /* 39 M68K, D2                   */
+    }, /* 40 M68K, D2                   */
     { HRDATAD (M68K_D3,         m68k_registers[M68K_REG_D3],        32, "M68K D3 register"),
-    }, /* 40 M68K, D3                   */
+    }, /* 41 M68K, D3                   */
     { HRDATAD (M68K_D4,         m68k_registers[M68K_REG_D4],        32, "M68K D4 register"),
-    }, /* 41 M68K, D4                   */
+    }, /* 42 M68K, D4                   */
     { HRDATAD (M68K_D5,         m68k_registers[M68K_REG_D5],        32, "M68K D5 register"),
-    }, /* 42 M68K, D5                   */
+    }, /* 43 M68K, D5                   */
     { HRDATAD (M68K_D6,         m68k_registers[M68K_REG_D6],        32, "M68K D6 register"),
-    }, /* 43 M68K, D6                   */
+    }, /* 44 M68K, D6                   */
     { HRDATAD (M68K_D7,         m68k_registers[M68K_REG_D7],        32, "M68K D7 register"),
-    }, /* 44 M68K, D7                   */
+    }, /* 45 M68K, D7                   */
     { HRDATAD (M68K_A0,         m68k_registers[M68K_REG_A0],        32, "M68K A0 register"),
-    }, /* 45 M68K, A0                   */
+    }, /* 46 M68K, A0                   */
     { HRDATAD (M68K_A1,         m68k_registers[M68K_REG_A1],        32, "M68K A1 register"),
-    }, /* 46 M68K, A1                   */
+    }, /* 47 M68K, A1                   */
     { HRDATAD (M68K_A2,         m68k_registers[M68K_REG_A2],        32, "M68K A2 register"),
-    }, /* 47 M68K, A2                   */
+    }, /* 48 M68K, A2                   */
     { HRDATAD (M68K_A3,         m68k_registers[M68K_REG_A3],        32, "M68K A3 register"),
-    }, /* 48 M68K, A3                   */
+    }, /* 49 M68K, A3                   */
     { HRDATAD (M68K_A4,         m68k_registers[M68K_REG_A4],        32, "M68K A4 register"),
-    }, /* 49 M68K, A4                   */
+    }, /* 50 M68K, A4                   */
     { HRDATAD (M68K_A5,         m68k_registers[M68K_REG_A5],        32, "M68K A5 register"),
-    }, /* 50 M68K, A5                   */
+    }, /* 51 M68K, A5                   */
     { HRDATAD (M68K_A6,         m68k_registers[M68K_REG_A6],        32, "M68K A6 register"),
-    }, /* 51 M68K, A6                   */
+    }, /* 52 M68K, A6                   */
     { HRDATAD (M68K_A7,         m68k_registers[M68K_REG_A7],        32, "M68K A7 register"),
-    }, /* 52 M68K, A7                   */
+    }, /* 53 M68K, A7                   */
     { HRDATAD (M68K_PC,         m68k_registers[M68K_REG_PC],        32, "M68K Program Counter register"),
-    }, /* 53 M68K, PC                   */
+    }, /* 54 M68K, PC                   */
     { HRDATAD (M68K_SR,         m68k_registers[M68K_REG_SR],        32, "M68K Status Register"),
-    }, /* 54 M68K, SR                   */
+    }, /* 55 M68K, SR                   */
     { HRDATAD (M68K_SP,         m68k_registers[M68K_REG_SP],        32, "M68K Stack Pointer register"),
-    }, /* 55 M68K, SP                   */
+    }, /* 56 M68K, SP                   */
     { HRDATAD (M68K_USP,        m68k_registers[M68K_REG_USP],       32, "M68K User Stack Pointer register"),
-    }, /* 56 M68K, USP                  */
+    }, /* 57 M68K, USP                  */
     { HRDATAD (M68K_ISP,        m68k_registers[M68K_REG_ISP],       32, "M68K Interrupt Stack Pointer register"),
-    }, /* 57 M68K, ISP                  */
+    }, /* 58 M68K, ISP                  */
     { HRDATAD (M68K_MSP,        m68k_registers[M68K_REG_MSP],       32, "M68K Master Stack Pointer register"),
-    }, /* 58 M68K, MSP                  */
+    }, /* 59 M68K, MSP                  */
     { HRDATAD (M68K_SFC,        m68k_registers[M68K_REG_SFC],       32, "M68K Source Function Code register"),
-    }, /* 59 M68K, SFC                  */
+    }, /* 60 M68K, SFC                  */
     { HRDATAD (M68K_DFC,        m68k_registers[M68K_REG_DFC],       32, "M68K Destination Function Code register"),
-    }, /* 60 M68K, DFC                  */
+    }, /* 61 M68K, DFC                  */
     { HRDATAD (M68K_VBR,        m68k_registers[M68K_REG_VBR],       32, "M68K Vector Base Register"),
-    }, /* 61 M68K, VBR                  */
+    }, /* 62 M68K, VBR                  */
     { HRDATAD (M68K_CACR,       m68k_registers[M68K_REG_CACR],      32, "M68K Cache Control Register"),
-    }, /* 62 M68K, CACR                 */
+    }, /* 63 M68K, CACR                 */
     { HRDATAD (M68K_CAAR,       m68k_registers[M68K_REG_CAAR],      32, "M68K Cache Address Register"),
-    }, /* 63 M68K, CAAR                 */
+    }, /* 64 M68K, CAAR                 */
     { HRDATAD (M68K_PREF_ADDR,  m68k_registers[M68K_REG_PREF_ADDR], 32, "M68K Last Prefetch Address register"),
-    }, /* 64 M68K, PREF_ADDR            */
+    }, /* 65 M68K, PREF_ADDR            */
     { HRDATAD (M68K_PREF_DATA,  m68k_registers[M68K_REG_PREF_DATA], 32, "M68K Last Prefetch Data register"),
-    }, /* 65 M68K, PREF_DATA            */
-    { HRDATAD (M68K_PPC,         m68k_registers[M68K_REG_PPC],       32, "M68K Previous Proram Counter register"),
-    }, /* 66 M68K, PPC                  */
-    { HRDATAD (M68K_IR,          m68k_registers[M68K_REG_IR],        32, "M68K Instruction Register"),
-    }, /* 67 M68K, IR                   */
-    { HRDATAD (M68K_CPU_TYPE,    m68k_registers[M68K_REG_CPU_TYPE],  32, "M68K CPU Type register"),
-        REG_RO }, /* 68 M68K, CPU_TYPE             */
+    }, /* 66 M68K, PREF_DATA            */
+    { HRDATAD (M68K_PPC,         m68k_registers[M68K_REG_PPC],      32, "M68K Previous Program Counter register"),
+    }, /* 67 M68K, PPC                  */
+    { HRDATAD (M68K_IR,          m68k_registers[M68K_REG_IR],       32, "M68K Instruction Register"),
+    }, /* 68 M68K, IR                   */
+    { HRDATAD (M68K_CPU_TYPE,    m68k_registers[M68K_REG_CPU_TYPE], 32, "M68K CPU Type register"),
+        REG_RO }, /* 69 M68K, CPU_TYPE             */
 
     // Pseudo registers
-    { FLDATAD (OPSTOP,   cpu_unit.flags,     UNIT_CPU_V_OPSTOP, "Stop on invalid operation pseudo register"),
-        REG_HRO         }, /* 69 */
-    { HRDATAD (SR,       SR,                 8, "Front panel switches pseudo register"),
-    }, /* 70 */
-    { HRDATAD (BANK,     bankSelect,         MAXBANKSLOG2, "Active bank pseudo register"),
+    { FLDATAD (OPSTOP,  cpu_unit.flags,     UNIT_CPU_V_OPSTOP, "Stop on invalid operation pseudo register"),
+        REG_HRO         }, /* 70 */
+    { HRDATAD (SR,      SR,                 8, "Front panel switches pseudo register"),
     }, /* 71 */
-    { HRDATAD (COMMON,   common,             32, "Starting address of common memory pseudo register"),
+    { HRDATAD (BANK,    bankSelect,         MAXBANKSLOG2, "Active bank pseudo register"),
     }, /* 72 */
-    { HRDATAD (SWITCHERPORT, switcherPort,   8, "I/O port for CPU switcher pseudo register"),
+    { HRDATAD (COMMON,  common,             32, "Starting address of common memory pseudo register"),
     }, /* 73 */
-    { DRDATAD (CLOCK,    clockFrequency,     32, "Clock frequency in kHz for 8080 / Z80 pseudo register"),
+    { HRDATAD (SWITCHERPORT, switcherPort,  8, "I/O port for CPU switcher pseudo register"),
     }, /* 74 */
-    { DRDATAD (SLICE,    sliceLength,        16, "Length of time slice for 8080 / Z80 pseudo register"),
+    { DRDATAD (CLOCK,   clockFrequency,     32, "Clock frequency in kHz for 8080 / Z80 pseudo register"),
     }, /* 75 */
-    { DRDATAD (TSTATES,  executedTStates,    32, "Executed t-states for 8080 / Z80 pseudo register"),
-        REG_RO              }, /* 76 */
-    { HRDATAD (CAPACITY, cpu_unit.capac,     32, "Size of RAM pseudo register"),
+    { DRDATAD (SLICE,   sliceLength,        16, "Length of time slice for 8080 / Z80 pseudo register"),
+    }, /* 76 */
+    { DRDATAD (TSTATES, executedTStates,    32, "Executed t-states for 8080 / Z80 pseudo register"),
         REG_RO              }, /* 77 */
-    { HRDATAD (PREVCAP,  previousCapacity,   32, "Previous size of RAM pseudo register"),
+    { HRDATAD (CAPACITY,cpu_unit.capac,     32, "Size of RAM pseudo register"),
         REG_RO              }, /* 78 */
-    { BRDATAD (PCQ,      pcq, 16, 16, PCQ_SIZE, "Program counter circular buffer for 8080 /Z80 pseudo register"),
-        REG_RO + REG_CIRC   }, /* 79 */
-    { DRDATAD (PCQP,     pcq_p,          PCQ_SIZE_LOG2, "Circular buffer head for 8080 / Z80 pseudo register"),
-        REG_HRO             }, /* 80 */
-    { HRDATAD (WRU,      sim_int_char,        8, "Interrupt character pseudo register"),
-    }, /* 81 */
+    { HRDATAD (PREVCAP, previousCapacity,   32, "Previous size of RAM pseudo register"),
+        REG_RO              }, /* 79 */
+    { BRDATAD (PCQ,     pcq, 16, 16,        PCQ_SIZE, "Program counter circular buffer for 8080 /Z80 pseudo register"),
+        REG_RO + REG_CIRC   }, /* 80 */
+    { DRDATAD (PCQP,    pcq_p, PCQ_SIZE_LOG2, "Circular buffer head for 8080 / Z80 pseudo register"),
+        REG_HRO             }, /* 81 */
+    { HRDATAD (WRU,     sim_int_char,       8, "Interrupt character pseudo register"),
+    }, /* 82 */
+    { HRDATAD(COMMONLOW,common_low,         1, "If set, use low memory for common area"),
+    }, /* 83 */
+    { HRDATAD(VECINT,vectorInterrupt,       8, "Vector Interrupt pseudo register"),
+    }, /* 84 */
+    { BRDATAD (DATABUS, dataBus, 16, 8,     MAX_INT_VECTORS, "Data bus pseudo register"),
+        REG_RO + REG_CIRC   }, /* 85 */
+    { HRDATAD(MMIOBASE,  mmiobase,          24, "Base address for 68K Memory-mapped I/O"),
+    }, /* 86 */
+    { HRDATAD(MMIOSIZE,  mmiosize,          17, "Size of 68K Memory-mapped I/O window"),
+    }, /* 87 */
+    { DRDATAD(M68KVAR,   m68kvariant,       17, "M68K Type (68000, 68010, etc.)"),
+    }, /* 88 */
+    { HRDATAD(NMI,       nmiInterrupt,       1, "NMI Interrupt pseudo register"),
+    }, /* 89 */
     { NULL }
 };
 
@@ -472,17 +538,23 @@ static MTAB cpu_mod[] = {
     { UNIT_CPU_VERBOSE,     0,                  "QUIET",        "QUIET",        NULL, NULL,
         NULL, "Disable verbose messages"                },
     { MTAB_VDV,             0,                  NULL,           "CLEARMEMORY",  &cpu_clear_command,
-        NULL, NULL, "Clears the RAM"  },
+        NULL, NULL, "Clears the RAM and removes mapped memory handlers"  },
     { UNIT_CPU_MMU,         UNIT_CPU_MMU,       "MMU",          "MMU",          NULL, NULL,
         NULL, "Enable the Memory Management Unit for 8080 / Z80"            },
     { UNIT_CPU_MMU,         0,                  "NOMMU",        "NOMMU",        &cpu_set_nommu,
         NULL, NULL, "Disable the Memory Management Unit for 8080 / Z80"     },
-    { MTAB_XTD | MTAB_VDV,  0,                  NULL,           "MEMORY",       &cpu_set_memory,
-        NULL, NULL, "Sets the RAM size for 8080 / Z80 / 8086"               },
+    { MTAB_XTD | MTAB_VDV | MTAB_VALR,  0,      NULL,           "MEMORY",       &cpu_set_memory,
+        NULL, NULL, "Sets the RAM size and removes mapped memory handlers for 8080 / Z80 / 8086" },
+    { MTAB_XTD | MTAB_VDV | MTAB_VALR,  0,      NULL,           "RESIZEMEMORY", &cpu_resize_memory,
+        NULL, NULL, "Sets the RAM size without removing mapped memory handlers for 8080 / Z80 / 8086"  },
     { UNIT_CPU_SWITCHER,    UNIT_CPU_SWITCHER,  "SWITCHER",     "SWITCHER",     &cpu_set_switcher, &cpu_show_switcher,
         NULL, "Sets CPU switcher port for 8080 / Z80 / 8086"   },
     { UNIT_CPU_SWITCHER,    0,                  "NOSWITCHER",   "NOSWITCHER",   &cpu_reset_switcher, &cpu_show_switcher,
         NULL, "Resets CPU switcher port for 8080 / Z80 / 8086" },
+    { UNIT_CPU_PO,     UNIT_CPU_PO,              "PO",          "PO",           NULL, NULL,
+        NULL, "Enable programmed output messages"     },
+    { UNIT_CPU_PO,          0,                   "NOPO",        "NOPO",         NULL, NULL,
+        NULL, "Disable programmed output messages"             },
     { MTAB_XTD | MTAB_VDV,  0,                  NULL,           "AZ80",         &cpu_set_ramtype,
         NULL, NULL, "Sets the RAM type to AltairZ80 RAM for 8080 / Z80 / 8086"  },
     { MTAB_XTD | MTAB_VDV,  1,                  NULL,           "HRAM",         &cpu_set_ramtype,
@@ -491,6 +563,8 @@ static MTAB cpu_mod[] = {
         NULL, NULL, "Sets the RAM type to Vector RAM for 8080 / Z80 / 8086"    },
     { MTAB_XTD | MTAB_VDV,  3,                  NULL,           "CRAM",         &cpu_set_ramtype,
         NULL, NULL, "Sets the RAM type to Cromemco RAM for 8080 / Z80 / 8086"   },
+    { MTAB_XTD | MTAB_VDV,  4,                  NULL,           "B810",         &cpu_set_ramtype,
+        NULL, NULL, "Sets the RAM type AB Digital Design B810 8080 / Z80 / 8086"},
     { MTAB_VDV,             4,                  NULL,           "4KB",          &cpu_set_size,
         NULL, NULL, "Sets the RAM size to 4KB for 8080 / Z80 / 8086"        },
     { MTAB_VDV,             8,                  NULL,           "8KB",          &cpu_set_size,
@@ -523,13 +597,43 @@ static MTAB cpu_mod[] = {
         NULL, NULL, "Sets the RAM size to 60KB for 8080 / Z80 / 8086"       },
     { MTAB_VDV,             64,                 NULL,           "64KB",         &cpu_set_size,
         NULL, NULL, "Sets the RAM size to 64KB for 8080 / Z80 / 8086"       },
+    { MTAB_VDV,  M68K_CPU_TYPE_68000,NULL,           "68000",        &m68k_set_chiptype,
+        NULL, NULL, "Sets the M68K variant to 68000"  },
+    { MTAB_VDV,  M68K_CPU_TYPE_68010,NULL,           "68010",        &m68k_set_chiptype,
+        NULL, NULL, "Sets the M68K variant to 68010"  },
+    { MTAB_VDV,  M68K_CPU_TYPE_68020,NULL,           "68020",        &m68k_set_chiptype,
+        NULL, NULL, "Sets the M68K variant to 68020"  },
+    { MTAB_XTD | MTAB_VDV,  M68K_CPU_TYPE_68EC020,NULL,         "68EC020",      &m68k_set_chiptype,
+        NULL, NULL, "Sets the M68K variant to 68EC020"  },
+    { MTAB_XTD | MTAB_VDV,  M68K_CPU_TYPE_68030,NULL,           "68030",        &m68k_set_chiptype,
+        NULL, NULL, "Sets the M68K variant to 68030"  },
+    { MTAB_XTD | MTAB_VDV,  M68K_CPU_TYPE_68EC030,NULL,         "68EC030",      &m68k_set_chiptype,
+        NULL, NULL, "Sets the M68K variant to 68EC030"  },
+    { MTAB_XTD | MTAB_VDV,  M68K_CPU_TYPE_68040,NULL,           "68040",        &m68k_set_chiptype,
+        NULL, NULL, "Sets the M68K variant to 68040"  },
+    { MTAB_XTD | MTAB_VDV,  M68K_CPU_TYPE_68EC040,NULL,         "68EC040",      &m68k_set_chiptype,
+        NULL, NULL, "Sets the M68K variant to 68EC040"  },
+    { MTAB_XTD | MTAB_VDV,  M68K_CPU_TYPE_68LC040,NULL,         "68LC040",      &m68k_set_chiptype,
+        NULL, NULL, "Sets the M68K variant to 68LC040"  },
+    { MTAB_XTD | MTAB_VDV,  M68K_CPU_TYPE_SCC68070,NULL,        "SCC68070",     &m68k_set_chiptype,
+        NULL, NULL, "Sets the M68K variant to SCC68070" },
+    { MTAB_XTD|MTAB_VDV|MTAB_NMO|MTAB_VALO|MTAB_SHP, 0, "HISTORY", "HISTORY",   &cpu_set_hist, &cpu_show_hist,
+      NULL, "CPU instruction history buffer"},
     { 0 }
+};
+
+/* Simulator-specific commands */
+static CTAB cpu_cmd_tbl[] = {
+    { "MEM", &cpu_cmd_memory, 0, "MEM <address>    Dump a block of memory\n" },
+    { "REG", &cpu_cmd_reg,    0, "REG              Display registers\n" },
+    { NULL, NULL, 0, NULL }
 };
 
 /* Debug Flags */
 static DEBTAB cpu_dt[] = {
     { "LOG_IN",     IN_MSG,     "Log IN operations"     },
     { "LOG_OUT",    OUT_MSG,    "Log OUT operations"    },
+    { "LOG_INT",    INT_MSG,    "Log interrupts"        },
     { NULL,         0                                   }
 };
 
@@ -547,87 +651,98 @@ DEVICE cpu_dev = {
     address is here, 'nulldev' means no device is available
 */
 static struct idev dev_table[256] = {
-    {&nulldev}, {&nulldev}, {&sio0d},   {&sio0s},           /* 00 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 04 */
-    {&dsk10},   {&dsk11},   {&dsk12},   {&nulldev},         /* 08 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 0C */
-    {&sio0s},   {&sio0d},   {&sio1s},   {&sio1d},           /* 10 */
-    {&sio0s},   {&sio0d},   {&sio0s},   {&sio0d},           /* 14 */
-    {&sio0s},   {&sio0d},   {&nulldev}, {&nulldev},         /* 18 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 1C */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 20 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 24 */
-    {&netStatus},{&netData},{&netStatus},{&netData},        /* 28 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 2C */
-    {&nulldev}, {&nulldev}, {&netStatus},{&netData},        /* 30 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 34 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 38 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 3C */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 40 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 44 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 48 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 4C */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 50 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 54 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 58 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 5C */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 60 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 64 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 68 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 6C */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 70 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 74 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 78 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 7C */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 80 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 84 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 88 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 8C */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 90 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 94 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 98 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* 9C */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* A0 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* A4 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* A8 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* AC */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* B0 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* B4 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* B8 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* BC */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* C0 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* C4 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* C8 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* CC */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* D0 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* D4 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* D8 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* DC */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* E0 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* E4 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* E8 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* EC */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* F0 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* F4 */
-    {&nulldev}, {&nulldev}, {&nulldev}, {&nulldev},         /* F8 */
-    {&nulldev}, {&hdsk_io}, {&simh_dev}, {&sr_dev}          /* FC */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&sio0d, "sio0d"},     {&sio0s, "sio0s"},             /* 00 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 04 */
+    {&dsk10, "dsk10"},     {&dsk11, "dsk11"},     {&dsk12, "dsk12"},     {&nulldev, "nulldev"},         /* 08 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 0C */
+    {&sio0s, "sio0s"},     {&sio0d, "sio0d"},     {&sio1s, "sio1s"},     {&sio1d, "sio1d"},             /* 10 */
+    {&sio0s, "sio0s"},     {&sio0d, "sio0d"},     {&sio0s, "sio0s"},     {&sio0d, "sio0d"},             /* 14 */
+    {&sio0s, "sio0s"},     {&sio0d, "sio0d"},     {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 18 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 1C */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 20 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 24 */
+    {&netStatus, "netStatus"}, {&netData, "netData"}, {&netStatus, "netStatus"}, {&netData, "netData"}, /* 28 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 2C */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&netStatus, "netStatus"},{&netData, "netData"},      /* 30 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 34 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 38 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 3C */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 40 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 44 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 48 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 4C */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 50 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 54 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 58 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 5C */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 60 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 64 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 68 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 6C */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 70 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 74 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 78 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 7C */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 80 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 84 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 88 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 8C */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 90 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 94 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 98 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* 9C */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* A0 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* A4 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* A8 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* AC */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* B0 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* B4 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* B8 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* BC */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* C0 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* C4 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* C8 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* CC */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* D0 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* D4 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* D8 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* DC */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* E0 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* E4 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* E8 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* EC */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* F0 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* F4 */
+    {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"}, {&nulldev, "nulldev"},         /* F8 */
+    {&nulldev, "nulldev"}, {&hdsk_io, "hdsk_io"}, {&simh_dev,"simh_dev"},{&sr_dev, "sr_dev"}            /* FC */
 };
 
-static int32 ramtype = 0;
-#define MAX_RAM_TYPE    3
+const char* handlerNameForPort(const int32 port) {
+    return dev_table[port & 0xff].name;
+}
+
+
+#define RAM_TYPE_AZ80   0       /* Altair-Z80 RAM card */
+#define RAM_TYPE_HRAM   1       /* North Start Horizon RAM card */
+#define RAM_TYPE_VRAM   2       /* Vector Graphic RAM card */
+#define RAM_TYPE_CRAM   3       /* Cromemco RAM card */
+#define RAM_TYPE_B810   4       /* AB Digital Design B810 RAM card */
+#define MAX_RAM_TYPE    RAM_TYPE_B810
+
+static int32 ramtype = RAM_TYPE_AZ80;
 
 ChipType chiptype = CHIP_TYPE_8080;
 
 void out(const uint32 Port, const uint32 Value) {
     if ((cpu_dev.dctrl & OUT_MSG) && sim_deb) {
         fprintf(sim_deb, "CPU: " ADDRESS_FORMAT
-                " OUT(port=0x%04x [%5d], value=0x%04x [%5d])\n", PCX, Port, Port, Value, Value);
+                " OUT(port=0x%04x [%5d] %s, value=0x%04x [%5d])\n", PCX, Port, Port, dev_table[Port & 0xff].name, Value, Value);
         fflush(sim_deb);
     }
     dev_table[Port & 0xff].routine(Port, 1, Value);
     if ((cpu_dev.dctrl & OUT_MSG) && sim_deb) {
         fprintf(sim_deb, "CPU: " ADDRESS_FORMAT
-                " OUT(port=0x%04x [%5d], value=0x%04x [%5d]) done\n", PCX, Port, Port, Value, Value);
+                " OUT(port=0x%04x [%5d] %s, value=0x%04x [%5d]) done\n", PCX, Port, Port, dev_table[Port & 0xff].name, Value, Value);
         fflush(sim_deb);
     }
 }
@@ -636,13 +751,13 @@ uint32 in(const uint32 Port) {
     uint32 result;
     if ((cpu_dev.dctrl & IN_MSG) && sim_deb) {
         fprintf(sim_deb, "CPU: " ADDRESS_FORMAT
-            " IN(port=0x%04x [%5d])\n", PCX, Port, Port);
+            " IN(port=0x%04x [%5d] %s)\n", PCX, Port, Port, dev_table[Port & 0xff].name);
         fflush(sim_deb);
     }
     result = dev_table[Port & 0xff].routine(Port, 0, 0);
     if ((cpu_dev.dctrl & IN_MSG) && sim_deb) {
         fprintf(sim_deb, "CPU: " ADDRESS_FORMAT
-            " IN(port=0x%04x [%5d]) = 0x%04x [%5d]\n", PCX, Port, Port, result, result);
+            " IN(port=0x%04x [%5d] %s) = 0x%04x [%5d]\n", PCX, Port, Port, dev_table[Port & 0xff].name, result, result);
         fflush(sim_deb);
     }
     return result;
@@ -1736,26 +1851,27 @@ typedef struct { /* Structure to describe a 2^LOG2PAGESIZE byte page of address 
     uint32 isRAM;
     uint32 isEmpty;
     int32 (*routine)(const int32, const int32, const int32);
+    const char *name; /* name of handler routine */
 } MDEV;
 
-static MDEV ROM_PAGE    =   {FALSE, FALSE,  NULL};  /* this makes a page ROM        */
-static MDEV RAM_PAGE    =   {TRUE,  FALSE,  NULL};  /* this makes a page RAM        */
-static MDEV EMPTY_PAGE  =   {FALSE, TRUE,   NULL};  /* this is non-existing memory  */
+static MDEV ROM_PAGE    =   {FALSE, FALSE,  NULL, "ROM"};       /* this makes a page ROM        */
+static MDEV RAM_PAGE    =   {TRUE,  FALSE,  NULL, "RAM"};       /* this makes a page RAM        */
+static MDEV EMPTY_PAGE  =   {FALSE, TRUE,   NULL, "NONEXIST"};  /* this is non-existing memory  */
 static MDEV mmu_table[MAXMEMORY >> LOG2PAGESIZE];
 
 /* Memory and I/O Resource Mapping and Unmapping routine. */
 uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
-        int32 (*routine)(const int32, const int32, const int32), uint8 unmap) {
+                        int32 (*routine)(const int32, const int32, const int32), const char* name, uint8 unmap) {
     uint32 page, i, addr;
     if (resource_type == RESOURCE_TYPE_MEMORY) {
         for (i = 0; i < (size >> LOG2PAGESIZE); i++) {
             addr = (baseaddr & 0xfff00) + (i << LOG2PAGESIZE);
-            if ((cpu_unit.flags & UNIT_CPU_BANKED) && (addr < common))
+            if ((cpu_unit.flags & UNIT_CPU_BANKED) && (((common_low == 0) && (addr < common)) || ((common_low == 1) && (addr >= common))))
                 addr |= bankSelect << MAXBANKSIZELOG2;
             page = addr >> LOG2PAGESIZE;
             if (cpu_unit.flags & UNIT_CPU_VERBOSE)
-                sim_printf("%s memory 0x%05x, handler=%p\n", unmap ? "Unmapping" : "  Mapping",
-                    addr, routine);
+                sim_printf("%s memory 0x%05x, handler=%s\n", unmap ? "Unmapping" : "  Mapping",
+                    addr, name);
             if (unmap) {
                 if (mmu_table[page].routine == routine) {   /* unmap only if it was mapped */
                     if (MEMORYSIZE < MAXBANKSIZE)
@@ -1766,10 +1882,10 @@ uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
                     else
                         mmu_table[page] = RAM_PAGE;
                 }
-            }
-            else {
+            } else {
                 mmu_table[page] = ROM_PAGE;
                 mmu_table[page].routine = routine;
+                mmu_table[page].name = name;
             }
         }
     } else if (resource_type == RESOURCE_TYPE_IO) {
@@ -1777,14 +1893,15 @@ uint32 sim_map_resource(uint32 baseaddr, uint32 size, uint32 resource_type,
             if (unmap) {
                 if (dev_table[i & 0xff].routine == routine) {
                     if (cpu_unit.flags & UNIT_CPU_VERBOSE)
-                        sim_printf("Unmapping  IO %04x, handler=%p\n", i, routine);
+                        sim_printf("Unmapping  IO %04x, handler=%s\n", i, dev_table[i & 0xff].name);
                     dev_table[i & 0xff].routine = &nulldev;
+                    dev_table[i & 0xff].name = "nulldev";
                 }
-            }
-            else {
+            } else {
                 if (cpu_unit.flags & UNIT_CPU_VERBOSE)
-                    sim_printf("  Mapping  IO %04x, handler=%p\n", i, routine);
+                    sim_printf("  Mapping  IO %04x, handler=%s\n", i, name);
                 dev_table[i & 0xff].routine = routine;
+                dev_table[i & 0xff].name = name;
             }
     } else {
         sim_printf("%s: cannot map unknown resource type %d\n", __FUNCTION__, resource_type);
@@ -1797,8 +1914,9 @@ static void PutBYTE(register uint32 Addr, const register uint32 Value) {
     MDEV m;
 
     Addr &= ADDRMASK;   /* registers are NOT guaranteed to be always 16-bit values */
-    if ((cpu_unit.flags & UNIT_CPU_BANKED) && (Addr < common))
+    if ((cpu_unit.flags & UNIT_CPU_BANKED) && (((common_low == 0) && (Addr < common)) || ((common_low == 1) && (Addr >= common))))
         Addr |= bankSelect << MAXBANKSIZELOG2;
+
     m = mmu_table[Addr >> LOG2PAGESIZE];
 
     if (m.isRAM)
@@ -1807,9 +1925,9 @@ static void PutBYTE(register uint32 Addr, const register uint32 Value) {
         m.routine(Addr, 1, Value);
     else if (cpu_unit.flags & UNIT_CPU_VERBOSE) {
         if (m.isEmpty)
-            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to write to non existing memory " ADDRESS_FORMAT "." NLP, PCX, Addr);
+            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to write to non existing memory " ADDRESS_FORMAT ".\n", PCX, Addr);
         else
-            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to write to ROM " ADDRESS_FORMAT "." NLP, PCX, Addr);
+            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to write to ROM " ADDRESS_FORMAT ".\n", PCX, Addr);
     }
 }
 
@@ -1825,9 +1943,9 @@ void PutBYTEExtended(register uint32 Addr, const register uint32 Value) {
         m.routine(Addr, 1, Value);
     else if (cpu_unit.flags & UNIT_CPU_VERBOSE) {
         if (m.isEmpty)
-            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to write to non existing memory " ADDRESS_FORMAT "." NLP, PCX, Addr);
+            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to write to non existing memory " ADDRESS_FORMAT ".\n", PCX, Addr);
         else
-            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to write to ROM " ADDRESS_FORMAT "." NLP, PCX, Addr);
+            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to write to ROM " ADDRESS_FORMAT ".\n", PCX, Addr);
     }
 }
 
@@ -1840,7 +1958,7 @@ static uint32 GetBYTE(register uint32 Addr) {
     MDEV m;
 
     Addr &= ADDRMASK;   /* registers are NOT guaranteed to be always 16-bit values */
-    if ((cpu_unit.flags & UNIT_CPU_BANKED) && (Addr < common))
+    if ((cpu_unit.flags & UNIT_CPU_BANKED) && (((common_low == 0) && (Addr < common)) || ((common_low == 1) && (Addr >= common))))
         Addr |= bankSelect << MAXBANKSIZELOG2;
     m = mmu_table[Addr >> LOG2PAGESIZE];
 
@@ -1850,7 +1968,7 @@ static uint32 GetBYTE(register uint32 Addr) {
         return m.routine(Addr, 0, 0); /* memory mapped I/O */
     if (m.isEmpty) {
         if (cpu_unit.flags & UNIT_CPU_VERBOSE)
-            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to read from non existing memory " ADDRESS_FORMAT "." NLP, PCX, Addr);
+            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to read from non existing memory " ADDRESS_FORMAT ".\n", PCX, Addr);
         return 0xff;
     }
     return M[Addr]; /* ROM */
@@ -1868,7 +1986,7 @@ uint32 GetBYTEExtended(register uint32 Addr) {
         return m.routine(Addr, 0, 0);
     if (m.isEmpty) {
         if (cpu_unit.flags & UNIT_CPU_VERBOSE)
-            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to read from non existing memory " ADDRESS_FORMAT "." NLP, PCX, Addr);
+            sim_printf("CPU: " ADDRESS_FORMAT " Attempt to read from non existing memory " ADDRESS_FORMAT ".\n", PCX, Addr);
         return 0xff;
     }
     return M[Addr];
@@ -1890,6 +2008,8 @@ uint32 getCommon(void) {
 uint8 GetBYTEWrapper(const uint32 Addr) {
     if (chiptype == CHIP_TYPE_8086)
         return GetBYTEExtended(Addr);
+    else if (chiptype == CHIP_TYPE_M68K)
+        return m68k_cpu_read_byte_raw(Addr);
     else if (cpu_unit.flags & UNIT_CPU_MMU)
         return GetBYTE(Addr);
     else
@@ -1900,6 +2020,8 @@ uint8 GetBYTEWrapper(const uint32 Addr) {
 void PutBYTEWrapper(const uint32 Addr, const uint32 Value) {
     if (chiptype == CHIP_TYPE_8086)
         PutBYTEExtended(Addr, Value);
+    else if (chiptype == CHIP_TYPE_M68K)
+        m68k_cpu_write_byte_raw(Addr, Value);
     else if (cpu_unit.flags & UNIT_CPU_MMU)
         PutBYTE(Addr, Value);
     else
@@ -1908,14 +2030,18 @@ void PutBYTEWrapper(const uint32 Addr, const uint32 Value) {
 
 /* DMA memory access during a simulation, suggested by Tony Nicholson */
 uint8 GetByteDMA(const uint32 Addr) {
-    if ((chiptype == CHIP_TYPE_8086) || (cpu_unit.flags & UNIT_CPU_MMU))
+    if (chiptype == CHIP_TYPE_M68K)
+        return m68k_cpu_read_byte_raw(Addr);
+    else if ((chiptype == CHIP_TYPE_8086) || (cpu_unit.flags & UNIT_CPU_MMU))
         return GetBYTEExtended(Addr);
     else
         return MOPT[Addr & ADDRMASK];
 }
 
 void PutByteDMA(const uint32 Addr, const uint32 Value) {
-    if ((chiptype == CHIP_TYPE_8086) || (cpu_unit.flags & UNIT_CPU_MMU))
+    if (chiptype == CHIP_TYPE_M68K)
+        m68k_cpu_write_byte_raw(Addr, Value);
+    else if ((chiptype == CHIP_TYPE_8086) || (cpu_unit.flags & UNIT_CPU_MMU))
         PutBYTEExtended(Addr, Value);
     else
         MOPT[Addr & ADDRMASK] = Value & 0xff;
@@ -1991,7 +2117,7 @@ void PutByteDMA(const uint32 Addr, const uint32 Value) {
 #define INOUTFLAGS_NONZERO(x)                                           \
     INOUTFLAGS((HIGH_REGISTER(BC) & 0xa8) | ((HIGH_REGISTER(BC) == 0) << 6), x)
 
-int32 switch_cpu_now = TRUE; /* hharte */
+int32 switch_cpu_now = TRUE;
 
 t_stat sim_instr (void) {
     t_stat result;
@@ -2023,30 +2149,13 @@ void setClockFrequency(const uint32 Value) {
     clockHasChanged = TRUE;
 }
 
-
-#if !UNIX_PLATFORM
-
-/* Poll for CPU stop when user presses sim_int_char. Must be followed by sim_process_event */
-
-#define INITIAL_POLL_COUNTER    1000
-
-void pollForCPUStop(void) {
-    static uint32 pollCounter = INITIAL_POLL_COUNTER;
-    if (--pollCounter == 0) {
-        pollCounter = INITIAL_POLL_COUNTER;
-        sim_poll_kbd(); /* the following sim_process_event will check for stop */
-    }
-}
-
-#endif
-
-
 static t_stat sim_instr_mmu (void) {
     extern int32 timerInterrupt;
     extern int32 timerInterruptHandler;
     extern int32 keyboardInterrupt;
     extern uint32 keyboardInterruptHandler;
     int32 reason = SCPE_OK;
+    uint32 i;
     register uint32 specialProcessing;
     register uint32 AF;
     register uint32 BC;
@@ -2062,14 +2171,31 @@ static t_stat sim_instr_mmu (void) {
     register uint32 cbits;
     register uint32 op;
     register uint32 adr;
-    /*  tStates contains the number of t-states executed. One t-state is executed
-        in one microsecond on a 1MHz CPU. tStates is used for real-time simulations.    */
-    register uint32 tStates;
-    uint32 tStatesInSlice; /* number of t-states in 10 mSec time-slice */
+
+    /*  The clock frequency simulation works as follows:
+     For each 8080 or Z80 instruction one can determine the number of t-states
+     needed for its execution. One t-state is executed in one microsecond on a
+     1MHz CPU. The variable sliceLength defines a time interval of typically
+     10 ms. When the clock frequency (clockFrequency) is known one can compute
+     the number of t-states which need to be completed in this slice:
+     tStatesInSlice = sliceLength * clockFrequency. The variable tStates counts
+     how many t-states have already been completed. startTime is initialized
+     with the current time when tStates is 0 at the beginning.
+
+     Periodically there is a check whether tStates >= tStatesInSlice.
+     If this is true case three things happen:
+
+     1. startTime is incremented by sliceLength giving the new expected current time.
+     2. tStates is decremented by tStatesInSlice.
+     3. In case startTime is in the future there is a sleep until startTime
+        is equal to the current time.
+     */
+    register uint32 tStates;    /* number of t-states executed in the current time-slice */
+    uint32 tStatesInSlice;      /* number of t-states in a 10 mSec time-slice */
     uint32 startTime, now;
     int32 tStateModifier = FALSE;
 
-    switch_cpu_now = TRUE; /* hharte */
+    switch_cpu_now = TRUE;
 
     AF = AF_S;
     BC = BC_S;
@@ -2079,22 +2205,17 @@ static t_stat sim_instr_mmu (void) {
     SP = SP_S;
     IX = IX_S;
     IY = IY_S;
-    specialProcessing = clockFrequency | timerInterrupt | keyboardInterrupt | sim_brk_summ;
+    specialProcessing = clockFrequency | nmiInterrupt | timerInterrupt | vectorInterrupt | keyboardInterrupt | sim_brk_summ;
     tStates = 0;
     if (rtc_avail) {
         startTime = sim_os_msec();
         tStatesInSlice = sliceLength * clockFrequency;
-    }
-    else /* make sure that sim_os_msec() is not called later */
+    } else /* make sure that sim_os_msec() is not called later */
         clockFrequency = startTime = tStatesInSlice = 0;
 
     /* main instruction fetch/decode loop */
     while (switch_cpu_now == TRUE) {        /* loop until halted    */
         if (sim_interval <= 0) {            /* check clock queue    */
-#if !UNIX_PLATFORM
-            /* poll on platforms without reliable signalling but not too often */
-            pollForCPUStop(); /* following sim_process_event will check for stop */
-#endif
             if ((reason = sim_process_event()))
                 break;
             if (clockHasChanged) {
@@ -2103,27 +2224,28 @@ static t_stat sim_instr_mmu (void) {
                 if (rtc_avail) {
                     startTime = sim_os_msec();
                     tStatesInSlice = sliceLength * clockFrequency;
-                }
-                else /* make sure that sim_os_msec() is not called later */
+                } else /* make sure that sim_os_msec() is not called later */
                     clockFrequency = startTime = tStatesInSlice = 0;
             }
-            specialProcessing = clockFrequency | timerInterrupt | keyboardInterrupt | sim_brk_summ;
+            specialProcessing = clockFrequency | nmiInterrupt | timerInterrupt | vectorInterrupt | keyboardInterrupt | sim_brk_summ;
         }
 
         if (specialProcessing) { /* quick check for special processing */
+
+            /* check for CPU clock frequency simulation + enough t-states executed */
             if (clockFrequency && (tStates >= tStatesInSlice)) {
                 /* clockFrequency != 0 implies that real time clock is available */
-                startTime += sliceLength;
-                tStates -= tStatesInSlice;
-                if (startTime > (now = sim_os_msec()))
+                startTime += sliceLength;   /* advance start time to new expected current time */
+                tStates -= tStatesInSlice;  /* reduce by t-states executed in a slice */
+                if (startTime > (now = sim_os_msec())) /* if expected time is in the future, sleep */
                     sim_os_ms_sleep(startTime - now);
             }
 
-            if (timerInterrupt && (IFF_S & 1)) {
-                timerInterrupt = FALSE;
+            if (nmiInterrupt) {
+                nmiInterrupt = FALSE;
                 specialProcessing = clockFrequency | sim_brk_summ;
-                IFF_S = 0; /* disable interrupts */
-                CHECK_BREAK_TWO_BYTES_EXTENDED(SP - 2, SP - 1, (timerInterrupt = TRUE, IFF_S |= 1));
+                IFF_S &= IFF2; /* Clear IFF1 */
+                CHECK_BREAK_TWO_BYTES_EXTENDED(SP - 2, SP - 1, (nmiInterrupt = TRUE, IFF_S |= IFF1));
                 if ((GetBYTE(PC) == HALTINSTRUCTION) && ((cpu_unit.flags & UNIT_CPU_STOPONHALT) == 0)) {
                     PUSH(PC + 1);
                     PCQ_ENTRY(PC);
@@ -2132,19 +2254,92 @@ static t_stat sim_instr_mmu (void) {
                     PUSH(PC);
                     PCQ_ENTRY(PC - 1);
                 }
+                tStates += 11;
+                PC = 0x0066;
+            }
+
+            if (timerInterrupt && (IFF_S & IFF1)) {
+                timerInterrupt = FALSE;
+                specialProcessing = clockFrequency | sim_brk_summ;
+                IFF_S = 0; /* disable interrupts */
+                CHECK_BREAK_TWO_BYTES_EXTENDED(SP - 2, SP - 1, (timerInterrupt = TRUE, IFF_S |= (IFF1 | IFF2)));
+                if ((GetBYTE(PC) == HALTINSTRUCTION) && ((cpu_unit.flags & UNIT_CPU_STOPONHALT) == 0)) {
+                    PUSH(PC + 1);
+                    PCQ_ENTRY(PC);
+                } else {
+                    PUSH(PC);
+                    PCQ_ENTRY(PC - 1);
+                }
                 PC = timerInterruptHandler & ADDRMASK;
             }
 
-            if (keyboardInterrupt && (IFF_S & 1)) {
-                keyboardInterrupt = FALSE;
+            if ((IM_S == 1) && vectorInterrupt && (IFF_S & IFF1)) {    /* Z80 Interrupt Mode 1 */
+                uint32 tempVectorInterrupt = vectorInterrupt;
+                uint8 intVector = 0;
+
+                while ((tempVectorInterrupt & 1) == 0) {
+                    tempVectorInterrupt >>= 1;
+                    intVector++;
+                }
+
+                vectorInterrupt &= ~(1 << intVector);
+
                 specialProcessing = clockFrequency | sim_brk_summ;
                 IFF_S = 0; /* disable interrupts */
-                CHECK_BREAK_TWO_BYTES_EXTENDED(SP - 2, SP - 1, (keyboardInterrupt = TRUE, IFF_S |= 1));
+                CHECK_BREAK_TWO_BYTES_EXTENDED(SP - 2, SP - 1, (vectorInterrupt |= (1 << intVector), IFF_S |= (IFF1 | IFF2)));
                 if ((GetBYTE(PC) == HALTINSTRUCTION) && ((cpu_unit.flags & UNIT_CPU_STOPONHALT) == 0)) {
                     PUSH(PC + 1);
                     PCQ_ENTRY(PC);
                 }
                 else {
+                    PUSH(PC);
+                    PCQ_ENTRY(PC - 1);
+                }
+
+                PC = 0x0038;
+
+                sim_debug(INT_MSG, &cpu_dev, ADDRESS_FORMAT
+                    " INT(mode=1 intVector=%d PC=%04X)\n", PCX, intVector, PC);
+            } else if ((IM_S == 2) && vectorInterrupt && (IFF_S & IFF1)) {
+                int32 vector;
+                uint32 tempVectorInterrupt = vectorInterrupt;
+                uint8 intVector = 0;
+
+                while ((tempVectorInterrupt & 1) == 0) {
+                    tempVectorInterrupt >>= 1;
+                    intVector++;
+                }
+
+                vectorInterrupt &= ~(1 << intVector);
+
+                specialProcessing = clockFrequency | sim_brk_summ;
+                IFF_S = 0; /* disable interrupts */
+                CHECK_BREAK_TWO_BYTES_EXTENDED(SP - 2, SP - 1, (vectorInterrupt |= (1 << intVector), IFF_S |= (IFF1 | IFF2)));
+                if ((GetBYTE(PC) == HALTINSTRUCTION) && ((cpu_unit.flags & UNIT_CPU_STOPONHALT) == 0)) {
+                    PUSH(PC + 1);
+                    PCQ_ENTRY(PC);
+                }
+                else {
+                    PUSH(PC);
+                    PCQ_ENTRY(PC - 1);
+                }
+
+                vector = (HIGH_REGISTER(IR_S) << 8) | dataBus[intVector];
+                PC = ((GetBYTE(vector+1) << 8) | GetBYTE(vector)) & ADDRMASK;
+
+                sim_debug(INT_MSG, &cpu_dev, ADDRESS_FORMAT
+                    " INT(mode=2 intVector=%d vector=%04X PC=%04X)\n", PCX, intVector, vector, PC);
+            }
+
+            if (keyboardInterrupt && (IFF_S & IFF1)) {
+                keyboardInterrupt = FALSE;
+                specialProcessing = clockFrequency | sim_brk_summ;
+                IFF_S = 0; /* disable interrupts */
+                CHECK_BREAK_TWO_BYTES_EXTENDED(SP - 2, SP - 1, (keyboardInterrupt = TRUE, IFF_S |= (IFF1 | IFF2)));
+                if ((GetBYTE(PC) == HALTINSTRUCTION) && ((cpu_unit.flags & UNIT_CPU_STOPONHALT) == 0)) {
+                    PUSH(PC + 1);
+                    PCQ_ENTRY(PC);
+                } else {
                     PUSH(PC);
                     PCQ_ENTRY(PC - 1);
                 }
@@ -2165,9 +2360,34 @@ static t_stat sim_instr_mmu (void) {
         }
 
         PCX = PC;
-        INCR(1);
 
-        switch(RAM_PP(PC)) {
+        /* 8080 INT/Z80 Interrupt Mode 0
+           Instruction to execute (ex. RST0-7) is on the data bus
+           NOTE: does not support multi-byte instructions such as CALL
+        */
+        if ((IM_S == 0) && vectorInterrupt && (IFF_S & IFF1)) {    /* 8080/Z80 Interrupt Mode 0 */
+            uint32 tempVectorInterrupt = vectorInterrupt;
+            uint8 intVector = 0;
+
+            while ((tempVectorInterrupt & 1) == 0) {
+                tempVectorInterrupt >>= 1;
+                intVector++;
+            }
+
+            IFF_S = 0; /* disable interrupts */
+
+            vectorInterrupt &= ~(1 << intVector);
+
+            op = dataBus[intVector];
+
+            sim_debug(INT_MSG, &cpu_dev, ADDRESS_FORMAT
+                " INT(mode=0 vectorInterrupt=%X intVector=%d op=%02X)\n", PCX, vectorInterrupt, intVector, op);
+        } else {
+            INCR(1);
+            op = RAM_PP(PC);
+        }
+
+        switch(op) {
 
             case 0x00:          /* NOP */
                 tStates += 4;   /* NOP 4 */
@@ -2275,8 +2495,7 @@ static t_stat sim_instr_mmu (void) {
                     PCQ_ENTRY(PCX);
                     PC += (int8) GetBYTE(PC) + 1;
                     tStates += 13;
-                }
-                else {
+                } else {
                     PC++;
                     tStates += 8;
                 }
@@ -2382,8 +2601,7 @@ static t_stat sim_instr_mmu (void) {
                 if (TSTFLAG(Z)) {
                     PC++;
                     tStates += 7;
-                }
-                else {
+                }  else {
                     PCQ_ENTRY(PCX);
                     PC += (int8) GetBYTE(PC) + 1;
                     tStates += 12;
@@ -2444,8 +2662,7 @@ static t_stat sim_instr_mmu (void) {
                     }
                     if (hd)
                         acu -= 0x160;   /* adjust high digit */
-                }
-                else {          /* last operation was an add */
+                } else {          /* last operation was an add */
                     if (TSTFLAG(H) || (temp > 9)) { /* adjust low digit */
                         SETFLAG(H, (temp > 9));
                         acu += 6;
@@ -2464,8 +2681,7 @@ static t_stat sim_instr_mmu (void) {
                     PCQ_ENTRY(PCX);
                     PC += (int8) GetBYTE(PC) + 1;
                     tStates += 12;
-                }
-                else {
+                } else {
                     PC++;
                     tStates += 7;
                 }
@@ -2523,8 +2739,7 @@ static t_stat sim_instr_mmu (void) {
                 if (TSTFLAG(C)) {
                     PC++;
                     tStates += 7;
-                }
-                else {
+                } else {
                     PCQ_ENTRY(PCX);
                     PC += (int8) GetBYTE(PC) + 1;
                     tStates += 12;
@@ -2585,8 +2800,7 @@ static t_stat sim_instr_mmu (void) {
                     PCQ_ENTRY(PCX);
                     PC += (int8) GetBYTE(PC) + 1;
                     tStates += 12;
-                }
-                else {
+                } else {
                     PC++;
                     tStates += 7;
                 }
@@ -3459,8 +3673,7 @@ static t_stat sim_instr_mmu (void) {
             case 0xc0:      /* RET NZ */
                 if (TSTFLAG(Z)) {
                     tStates += 5; /* RNZ 5 */
-                }
-                else {
+                } else {
                     CHECK_BREAK_WORD(SP);
                     PCQ_ENTRY(PCX);
                     POP(PC);
@@ -3515,8 +3728,7 @@ static t_stat sim_instr_mmu (void) {
                     PCQ_ENTRY(PCX);
                     POP(PC);
                     tStates += 11; /* RZ 11 */
-                }
-                else {
+                } else {
                     tStates += 5; /* RZ 5 */
                 }
                 break;
@@ -3537,13 +3749,12 @@ static t_stat sim_instr_mmu (void) {
                     if (cpu_unit.flags & UNIT_CPU_OPSTOP) {
                         reason = STOP_OPCODE;
                         goto end_decode;
-                    }
-                    else {
+                    } else {
                         JPC(1);
                         break;
                     }
                 }
-                
+
                 INCR(1);
                 adr = HL;
                 switch ((op = GetBYTE(PC)) & 7) {
@@ -3739,8 +3950,7 @@ static t_stat sim_instr_mmu (void) {
             case 0xd0:      /* RET NC */
                 if (TSTFLAG(C)) {
                     tStates += 5; /* RNC 5 */
-                }
-                else {
+                } else {
                     CHECK_BREAK_WORD(SP);
                     PCQ_ENTRY(PCX);
                     POP(PC);
@@ -3796,8 +4006,7 @@ static t_stat sim_instr_mmu (void) {
                     PCQ_ENTRY(PCX);
                     POP(PC);
                     tStates += 11; /* RC 11 */
-                }
-                else {
+                } else {
                     tStates += 5; /* RC 5 */
                 }
                 break;
@@ -3846,8 +4055,7 @@ static t_stat sim_instr_mmu (void) {
                     if (cpu_unit.flags & UNIT_CPU_OPSTOP) {
                         reason = STOP_OPCODE;
                         goto end_decode;
-                    }
-                    else {
+                    } else {
                         CALLC(1);   /* also updates tStates */
                         break;
                     }
@@ -4586,8 +4794,7 @@ static t_stat sim_instr_mmu (void) {
             case 0xe0:      /* RET PO */
                 if (TSTFLAG(P)) {
                     tStates += 5; /* RPO 5 */
-                }
-                else {
+                } else {
                     CHECK_BREAK_WORD(SP);
                     PCQ_ENTRY(PCX);
                     POP(PC);
@@ -4642,8 +4849,7 @@ static t_stat sim_instr_mmu (void) {
                     PCQ_ENTRY(PCX);
                     POP(PC);
                     tStates += 11; /* RPE 11 */
-                }
-                else {
+                } else {
                     tStates += 5; /* RPE 5 */
                 }
                 break;
@@ -4674,13 +4880,12 @@ static t_stat sim_instr_mmu (void) {
                     if (cpu_unit.flags & UNIT_CPU_OPSTOP) {
                         reason = STOP_OPCODE;
                         goto end_decode;
-                    }
-                    else {
+                    } else {
                         CALLC(1);   /* also updates tStates */
                         break;
                     }
                 }
-                
+
                 INCR(1);
                 switch (RAM_PP(PC)) {
 
@@ -4756,6 +4961,7 @@ static t_stat sim_instr_mmu (void) {
                         break;
 
                     case 0x46:          /* IM 0 */
+                        IM_S = 0;
                         tStates += 8;   /* interrupt mode 0 */
                         break;
 
@@ -4838,12 +5044,13 @@ static t_stat sim_instr_mmu (void) {
                         break;
 
                     case 0x56:          /* IM 1 */
+                        IM_S = 1;
                         tStates += 8;   /* interrupt mode 1 */
                         break;
 
                     case 0x57:      /* LD A,I */
                         tStates += 9;
-                        AF = (AF & 0x29) | (IR_S & ~0xff) | ((IR_S >> 8) & 0x80) | (((IR_S & ~0xff) == 0) << 6) | ((IFF_S & 2) << 1);
+                        AF = (AF & 0x29) | (IR_S & ~0xff) | ((IR_S >> 8) & 0x80) | (((IR_S & ~0xff) == 0) << 6) | ((IFF_S & IFF2) << 1);
                         break;
 
                     case 0x58:      /* IN E,(C) */
@@ -4877,13 +5084,14 @@ static t_stat sim_instr_mmu (void) {
                         break;
 
                     case 0x5e:          /* IM 2 */
+                        IM_S = 2;
                         tStates += 8;   /* interrupt mode 2 */
                         break;
 
                     case 0x5f:      /* LD A,R */
                         tStates += 9;
                         AF = (AF & 0x29) | ((IR_S & 0xff) << 8) | (IR_S & 0x80) |
-                            (((IR_S & 0xff) == 0) << 6) | ((IFF_S & 2) << 1);
+                            (((IR_S & 0xff) == 0) << 6) | ((IFF_S & IFF2) << 1);
                         break;
 
                     case 0x60:      /* IN H,(C) */
@@ -5307,8 +5515,7 @@ static t_stat sim_instr_mmu (void) {
             case 0xf0:      /* RET P */
                 if (TSTFLAG(S)) {
                     tStates += 5; /* RP 5 */
-                }
-                else {
+                } else {
                     CHECK_BREAK_WORD(SP);
                     PCQ_ENTRY(PCX);
                     POP(PC);
@@ -5360,8 +5567,7 @@ static t_stat sim_instr_mmu (void) {
                     PCQ_ENTRY(PCX);
                     POP(PC);
                     tStates += 11; /* RM 11 */
-                }
-                else {
+                } else {
                     tStates += 5; /* RM 5 */
                 }
                 break;
@@ -5377,7 +5583,7 @@ static t_stat sim_instr_mmu (void) {
 
             case 0xfb:          /* EI */
                 tStates += 4;   /* EI 4 */
-                IFF_S = 3;
+                IFF_S = (IFF1 | IFF2);
                 break;
 
             case 0xfc:              /* CALL M,nnnn */
@@ -5389,13 +5595,12 @@ static t_stat sim_instr_mmu (void) {
                     if (cpu_unit.flags & UNIT_CPU_OPSTOP) {
                         reason = STOP_OPCODE;
                         goto end_decode;
-                    }
-                    else {
+                    } else {
                         CALLC(1);   /* also updates tStates */
                         break;
                     }
                 }
-                
+
                 INCR(1);
                 switch (RAM_PP(PC)) {
 
@@ -6128,8 +6333,35 @@ static t_stat sim_instr_mmu (void) {
             PC = 0x38;
         }
 
-        sim_interval--;
+        /*
+        ** Save in instruction history ring buffer
+        */
+        if (hst_lnt && ((chiptype == CHIP_TYPE_8080) || (chiptype == CHIP_TYPE_Z80))) {
+            hst[hst_p].valid = 1;
+            hst[hst_p].pc = PCX;
+            hst[hst_p].sp = SP;
+            hst[hst_p].af = AF;
+            hst[hst_p].bc = BC;
+            hst[hst_p].de = DE;
+            hst[hst_p].hl = HL;
+            hst[hst_p].af1 = AF1_S;
+            hst[hst_p].bc1 = BC1_S;
+            hst[hst_p].de1 = DE1_S;
+            hst[hst_p].hl1 = HL1_S;
+            hst[hst_p].ix = IX;
+            hst[hst_p].iy = IY;
 
+            for (i = 0; i < INST_MAX_BYTES; i++) {
+                hst[hst_p].op[i] = GetBYTE(PCX + i);
+            }
+
+            if (++hst_p == hst_lnt) {
+                hst_p = 0;
+            }
+        }
+
+        PC &= ADDRMASK; /* reestablish invariant */
+        sim_interval--;
     }
 
     /* It we stopped processing instructions because of a switch to the other
@@ -6143,6 +6375,9 @@ static t_stat sim_instr_mmu (void) {
 
     /* simulation halted */
     PC_S = ((reason == STOP_OPCODE) || (reason == STOP_MEM)) ? PCX : (PC & ADDRMASK);
+    if ((cpu_unit.flags & UNIT_CPU_BANKED) && ((((common_low == 0) && ((uint32)PC_S < common))) || (((common_low == 1) && ((uint32)PC_S >= common)))))
+
+        PC_S |= bankSelect << MAXBANKSIZELOG2;
     pcq_r -> qptr = pcq_p;  /* update pc q ptr */
     AF_S = AF;
     BC_S = BC;
@@ -6155,22 +6390,41 @@ static t_stat sim_instr_mmu (void) {
     return reason;
 }
 
+/*
+ * This sequence of instructions is a mix that mimics
+ * a reasonable instruction set that is a close estimate
+ * to the calibrated result.
+ */
+
+static const char *cpu_clock_precalibrate_commands[] = {
+    "-m 100 LXI H,200H",
+    "-m 103 MVI B,0",
+    "-m 105 DCR B",
+    "-m 106 MOV M,B",
+    "-m 107 INX H",
+    "-m 108 JNZ 0105H",
+    "-m 10B JMP 0100H",
+    "PC 100",
+    NULL};
+
 /* reset routine */
 
 static t_stat cpu_reset(DEVICE *dptr) {
     int32 i;
     if (sim_vm_is_subroutine_call == NULL) { /* First time reset? */
         sim_vm_is_subroutine_call = cpu_is_pc_a_subroutine_call;
+        sim_vm_cmd = cpu_cmd_tbl;
         altairz80_init();
     }
     AF_S = AF1_S = 0;
     BC_S = DE_S = HL_S = 0;
     BC1_S = DE1_S = HL1_S = 0;
-    IR_S = IX_S = IY_S = SP_S = 0;
-    IFF_S = 3;
+    IR_S = IX_S = IY_S = SP_S = PC_S = 0;
+    IM_S = IFF_S = 0;  /* Set IM0, reset IFF1 and IFF2 */
     setBankSelect(0);
     cpu8086reset();
     m68k_cpu_reset();
+    sim_clock_precalibrate_commands = cpu_clock_precalibrate_commands;
     sim_brk_types = (SWMASK('E') | SWMASK('I') | SWMASK('M'));
     sim_brk_dflt = SWMASK('E');
     for (i = 0; i < PCQ_SIZE; i++)
@@ -6273,6 +6527,7 @@ static t_stat cpu_ex(t_value *vptr, t_addr addr, UNIT *uptr, int32 sw) {
             break;
 
         default:
+            *vptr = 0; // make clear to static checking that a value is assigned in all cases
             return SCPE_AFAIL;
             break;
     }
@@ -6315,7 +6570,7 @@ typedef struct {
 const static CPUFLAG cpuflags8080[] = {
     {1 << 7,    "S"},
     {1 << 6,    "Z"},
-    {1 << 4,    "A"},
+    {1 << 4,    "H"},
     {1 << 3,    "P"},
     {1 << 1,    "N"},
     {1 << 0,    "C"},
@@ -6325,7 +6580,7 @@ const static CPUFLAG cpuflags8080[] = {
 const static CPUFLAG cpuflagsZ80[] = {
     {1 << 7,    "S"},
     {1 << 6,    "Z"},
-    {1 << 4,    "A"},
+    {1 << 4,    "H"},
     {1 << 3,    "V"},
     {1 << 1,    "N"},
     {1 << 0,    "C"},
@@ -6368,15 +6623,29 @@ const static CPUFLAG *cpuflags[NUM_CHIP_TYPE] = { cpuflags8080, cpuflagsZ80,
     cpuflags8086, cpuflagsM68K, };
 
 /* needs to be set for each ramtype <= MAX_RAM_TYPE */
-static const char *ramTypeToString[] = { "AZ80", "HRAM", "VRAM", "CRAM" };
+static const char *ramTypeToString[] = { "AZ80", "HRAM", "VRAM", "CRAM", "B810" };
+
+static const char* m68kVariantToString[] = {
+    "INVALID",
+    "68000",   "68010",
+    "68EC020", "68020",
+    "68EC030", "68030",
+    "68EC040", "680LC40", "68040",
+    "SCC68070"
+};
 
 static t_stat chip_show(FILE *st, UNIT *uptr, int32 val, CONST void *desc) {
     fprintf(st, cpu_unit.flags & UNIT_CPU_OPSTOP ? "ITRAP, " : "NOITRAP, ");
-    if (chiptype < NUM_CHIP_TYPE)
+    if ((chiptype >= 0) && (chiptype < NUM_CHIP_TYPE)) {
         fprintf(st, "%s", cpu_mod[chiptype].mstring);
+        if (chiptype == CHIP_TYPE_M68K) {
+            fprintf(st, " (%s)", m68kVariantToString[m68kvariant]);
+        }
+    }
     fprintf(st, ", ");
     if (ramtype <= MAX_RAM_TYPE)
         fprintf(st, "%s", ramTypeToString[ramtype]);
+
     return SCPE_OK;
 }
 
@@ -6416,29 +6685,38 @@ static t_stat cpu_show(FILE *st, UNIT *uptr, int32 val, CONST void *desc) {
             }
         fprintf(st, "]");
     }
-    if (chiptype < NUM_CHIP_TYPE) {
+    if ((chiptype >= 0) && (chiptype < NUM_CHIP_TYPE)) {
         first = TRUE;
         /* show verbose CPU flags */
         for (i = 0; cpuflags[chiptype][i].mask; i++)
             if (*flagregister[chiptype] & cpuflags[chiptype][i].mask) {
                 if (first) {
                     first = FALSE;
-                    fprintf(st, "\nFlags");
+                    fprintf(st, "\n\tFlags");
                 }
                 fprintf(st, " %s", cpuflags[chiptype][i].flagName);
             }
     }
+    if (chiptype == CHIP_TYPE_M68K) {
+        fprintf(st, "\n\tMemory-Mapped I/O: 0x%06x-0x%06x", mmiobase, mmiobase + (mmiosize - 1));
+    }
+
     return SCPE_OK;
 }
 
-static void cpu_clear(void) {
+static void cpu_clear(t_bool unmap) {
     uint32 i;
     for (i = 0; i < MAXMEMORY; i++)
         M[i] = 0;
     for (i = 0; i < (MAXMEMORY >> LOG2PAGESIZE); i++)
-        mmu_table[i] = RAM_PAGE;
+        if (!mmu_table[i].routine || unmap) {
+            if (mmu_table[i].routine && (cpu_unit.flags & UNIT_CPU_VERBOSE))
+                sim_printf("Unmapping memory 0x%05x, handler=%s\n", i << LOG2PAGESIZE, mmu_table[i].name);
+            mmu_table[i] = RAM_PAGE;
+        }
     for (i = (MEMORYSIZE >> LOG2PAGESIZE); i < (MAXMEMORY >> LOG2PAGESIZE); i++)
-        mmu_table[i] = EMPTY_PAGE;
+        if (!mmu_table[i].routine || unmap)
+            mmu_table[i] = EMPTY_PAGE;
     if (cpu_unit.flags & UNIT_CPU_ALTAIRROM)
         install_ALTAIRbootROM();
     m68k_clear_memory();
@@ -6446,7 +6724,7 @@ static void cpu_clear(void) {
 }
 
 static t_stat cpu_clear_command(UNIT *uptr, int32 value, CONST char *cptr, void *desc) {
-    cpu_clear();
+    cpu_clear(TRUE);
     return SCPE_OK;
 }
 
@@ -6485,9 +6763,8 @@ static t_stat cpu_set_banked(UNIT *uptr, int32 value, CONST char *cptr, void *de
             previousCapacity = MEMORYSIZE;
         MEMORYSIZE = MAXMEMORY;
         cpu_dev.awidth = MAXBANKSIZELOG2 + MAXBANKSLOG2;
-        cpu_clear();
-    }
-    else if (chiptype == CHIP_TYPE_8086) {
+        cpu_clear(TRUE);
+    } else if (chiptype == CHIP_TYPE_8086) {
         sim_printf("Cannot use banked memory for 8086 CPU.\n");
         return SCPE_ARG;
     }
@@ -6498,7 +6775,7 @@ static t_stat cpu_set_nonbanked(UNIT *uptr, int32 value, CONST char *cptr, void 
     if ((chiptype == CHIP_TYPE_8080) || (chiptype == CHIP_TYPE_Z80)) {
         MEMORYSIZE = previousCapacity;
         cpu_dev.awidth = MAXBANKSIZELOG2;
-        cpu_clear();
+        cpu_clear(TRUE);
     }
     return SCPE_OK;
 }
@@ -6506,15 +6783,15 @@ static t_stat cpu_set_nonbanked(UNIT *uptr, int32 value, CONST char *cptr, void 
 static int32 bankseldev(const int32 port, const int32 io, const int32 data) {
     if (io) {
         switch(ramtype) {
-            case 1:
+            case RAM_TYPE_HRAM:
                 if (data & 0x40) {
-                    sim_printf("HRAM: Parity %s" NLP, data & 1 ? "ON" : "OFF");
+                    sim_printf("HRAM: Parity %s\n", data & 1 ? "ON" : "OFF");
                 } else {
-                    sim_printf("HRAM BANKSEL=%02x" NLP, data);
+                    sim_printf("HRAM BANKSEL=%02x\n", data);
                 }
                 break;
-            case 2:
-/*              sim_printf("VRAM BANKSEL=%02x" NLP, data);*/
+            case RAM_TYPE_VRAM:
+/*              sim_printf("VRAM BANKSEL=%02x\n", data);*/
                 switch(data & 0xFF) {
                     case 0x01:
 /*                  case 0x41:      // OASIS uses this for some reason? */
@@ -6543,12 +6820,12 @@ static int32 bankseldev(const int32 port, const int32 io, const int32 data) {
                         setBankSelect(7);
                         break;
                     default:
-/*                      sim_printf("Invalid bank select 0x%02x for VRAM" NLP, data);*/
+/*                      sim_printf("Invalid bank select 0x%02x for VRAM\n", data);*/
                         break;
                 }
                 break;
-            case 3:
-/*                sim_printf(ADDRESS_FORMAT " CRAM BANKSEL=%02x" NLP, PCX, data); */
+            case RAM_TYPE_CRAM:
+/*                sim_printf(ADDRESS_FORMAT " CRAM BANKSEL=%02x\n", PCX, data); */
                 switch(data & 0x7F) {
                     case 0x01:
                         setBankSelect(0);
@@ -6575,12 +6852,18 @@ static int32 bankseldev(const int32 port, const int32 io, const int32 data) {
 /*                        setBankSelect(7); */
 /*                        break; */
                     default:
-                        sim_printf("Invalid bank select 0x%02x for CRAM" NLP, data);
+                        sim_printf("Invalid bank select 0x%02x for CRAM\n", data);
                         break;
                 }
-
                 break;
-            case 0:
+            case RAM_TYPE_B810:
+                if (data < 16) {
+                    setBankSelect(data);
+                } else {
+                    sim_printf("Invalid bank select 0x%02x for B810\n", data);
+                }
+                break;
+            case RAM_TYPE_AZ80:
             default:
                 break;
         }
@@ -6591,7 +6874,7 @@ static int32 bankseldev(const int32 port, const int32 io, const int32 data) {
 }
 
 static void cpu_set_chiptype_short(const int32 value) {
-    if ((chiptype == value) || (chiptype >= NUM_CHIP_TYPE))
+    if ((chiptype == value) || (value < 0) || (value >= NUM_CHIP_TYPE))
         return; /* nothing to do */
     if (((chiptype == CHIP_TYPE_8080) && (value == CHIP_TYPE_Z80)) ||
         ((chiptype == CHIP_TYPE_Z80) && (value == CHIP_TYPE_8080))) {
@@ -6630,7 +6913,7 @@ static void cpu_set_chiptype_short(const int32 value) {
 
 static t_stat cpu_set_chiptype(UNIT *uptr, int32 value, CONST char *cptr, void *desc) {
     cpu_set_chiptype_short(value);
-    cpu_clear();
+    cpu_clear(TRUE);
     return SCPE_OK;
 }
 
@@ -6641,17 +6924,17 @@ static int32 switchcpu_io(const int32 port, const int32 io, CONST int32 data) {
             case CHIP_TYPE_8080:
             case CHIP_TYPE_Z80:
                 if (cpu_unit.flags & UNIT_CPU_VERBOSE) {
-                    sim_printf("CPU: " ADDRESS_FORMAT " SWITCH(port=%02x) to 8086" NLP, PCX, port);
+                    sim_printf("CPU: " ADDRESS_FORMAT " SWITCH(port=%02x) to 8086\n", PCX, port);
                 }
                 new_chiptype = CHIP_TYPE_8086;
-                switch_cpu_now = FALSE; /* hharte */
+                switch_cpu_now = FALSE;
                 break;
             case CHIP_TYPE_8086:
                 if (cpu_unit.flags & UNIT_CPU_VERBOSE) {
-                    sim_printf("CPU: " ADDRESS_FORMAT " SWITCH(port=%02x) to 8085/Z80" NLP, PCX, port);
+                    sim_printf("CPU: " ADDRESS_FORMAT " SWITCH(port=%02x) to 8085/Z80\n", PCX, port);
                 }
                 new_chiptype = CHIP_TYPE_Z80;
-                switch_cpu_now = FALSE; /* hharte */
+                switch_cpu_now = FALSE;
                 break;
             default:
                 sim_printf("%s: invalid chiptype: %d\n", __FUNCTION__, chiptype);
@@ -6678,7 +6961,7 @@ static t_stat cpu_set_switcher(UNIT *uptr, int32 value, CONST char *cptr, void *
     struct idev safe;
     switcherPort &= 0xff;
     safe = dev_table[switcherPort];
-    if (sim_map_resource(switcherPort, 1, RESOURCE_TYPE_IO, &switchcpu_io, FALSE)) {
+    if (sim_map_resource(switcherPort, 1, RESOURCE_TYPE_IO, &switchcpu_io, "switchcpu_io", FALSE)) {
         sim_printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, switcherPort);
         return SCPE_ARG;
     }
@@ -6687,7 +6970,7 @@ static t_stat cpu_set_switcher(UNIT *uptr, int32 value, CONST char *cptr, void *
 }
 
 static t_stat cpu_reset_switcher(UNIT *uptr, int32 value, CONST char *cptr, void *desc) {
-    if (sim_map_resource(switcherPort, 1, RESOURCE_TYPE_IO, oldSwitcherDevice.routine, FALSE)) {
+    if (sim_map_resource(switcherPort, 1, RESOURCE_TYPE_IO, oldSwitcherDevice.routine, oldSwitcherDevice.name, FALSE)) {
         sim_printf("%s: error mapping I/O resource at 0x%04x\n", __FUNCTION__, switcherPort);
         return SCPE_ARG;
     }
@@ -6703,20 +6986,25 @@ static t_stat cpu_set_ramtype(UNIT *uptr, int32 value, CONST char *cptr, void *d
     }
 
     switch(ramtype) {
-        case 1:
+        case RAM_TYPE_HRAM:
             if (cpu_unit.flags & UNIT_CPU_VERBOSE)
                 sim_printf("Unmapping NorthStar HRAM\n");
-            sim_map_resource(0xC0, 1, RESOURCE_TYPE_IO, &bankseldev, TRUE);
+            sim_map_resource(0xC0, 1, RESOURCE_TYPE_IO, &bankseldev, "bankseldev", TRUE);
             break;
-        case 2:
+        case RAM_TYPE_VRAM:
             if (cpu_unit.flags & UNIT_CPU_VERBOSE)
                 sim_printf("Unmapping Vector RAM\n");
-            sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, TRUE);
+            sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, "bankseldev", TRUE);
             break;
-        case 3:
+        case RAM_TYPE_CRAM:
             if (cpu_unit.flags & UNIT_CPU_VERBOSE)
                 sim_printf("Unmapping Cromemco RAM\n");
-            sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, TRUE);
+            sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, "bankseldev", TRUE);
+            break;
+        case RAM_TYPE_B810:
+            if (cpu_unit.flags & UNIT_CPU_VERBOSE)
+                sim_printf("Unmapping AB Digital Design B810 RAM\n");
+            sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, "bankseldev", TRUE);
             break;
         case 0:
         default:
@@ -6726,20 +7014,25 @@ static t_stat cpu_set_ramtype(UNIT *uptr, int32 value, CONST char *cptr, void *d
     }
 
     switch(value) {
-        case 1:
+        case RAM_TYPE_HRAM:
             if (cpu_unit.flags & UNIT_CPU_VERBOSE)
                 sim_printf("NorthStar HRAM Selected\n");
-            sim_map_resource(0xC0, 1, RESOURCE_TYPE_IO, &bankseldev, FALSE);
+            sim_map_resource(0xC0, 1, RESOURCE_TYPE_IO, &bankseldev, "bankseldev", FALSE);
             break;
-        case 2:
+        case RAM_TYPE_VRAM:
             if (cpu_unit.flags & UNIT_CPU_VERBOSE)
                 sim_printf("Vector RAM Selected\n");
-            sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, FALSE);
+            sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, "bankseldev", FALSE);
             break;
-        case 3:
+        case RAM_TYPE_CRAM:
             if (cpu_unit.flags & UNIT_CPU_VERBOSE)
                 sim_printf("Cromemco RAM Selected\n");
-            sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, FALSE);
+            sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, "bankseldev", FALSE);
+            break;
+        case RAM_TYPE_B810:
+            if (cpu_unit.flags & UNIT_CPU_VERBOSE)
+                sim_printf("AB Digital Design B810 RAM Selected\n");
+            sim_map_resource(0x40, 1, RESOURCE_TYPE_IO, &bankseldev, "bankseldev", FALSE);
             break;
         case 0:
         default:
@@ -6753,7 +7046,7 @@ static t_stat cpu_set_ramtype(UNIT *uptr, int32 value, CONST char *cptr, void *d
 }
 
 /* set memory to 'size' kilo byte */
-static t_stat set_size(uint32 size) {
+static t_stat set_size(uint32 size, t_bool unmap) {
     uint32 maxsize;
     if (chiptype == CHIP_TYPE_M68K) {   // ignore for M68K
         if (cpu_unit.flags & UNIT_CPU_VERBOSE)
@@ -6775,23 +7068,193 @@ static t_stat set_size(uint32 size) {
     cpu_dev.awidth = MAXBANKSIZELOG2;
     if  (size > MAXBANKSIZE)
         cpu_dev.awidth += MAXBANKSLOG2;
-    cpu_clear();
+    cpu_clear(unmap);
     return SCPE_OK;
 }
 
 static t_stat cpu_set_size(UNIT *uptr, int32 value, CONST char *cptr, void *desc) {
-    return set_size(value);
+    return set_size(value, TRUE);
 }
 
 static t_stat cpu_set_memory(UNIT *uptr, int32 value, CONST char *cptr, void *desc) {
     uint32 size, result, i;
-    if (cptr == NULL)
-        return SCPE_ARG;
+    if (cptr == NULL) {
+        sim_printf("Memory size must be provided as SET CPU MEMORY=xK\n");
+        return SCPE_ARG | SCPE_NOMESSAGE;
+    }
     result = sscanf(cptr, "%i%n", &size, &i);
     if ((result == 1) && (cptr[i] == 'K') && ((cptr[i + 1] == 0) ||
             ((cptr[i + 1] == 'B') && (cptr[i + 2] == 0))))
-        return set_size(size);
-    return SCPE_ARG;
+        return set_size(size, TRUE);
+    sim_printf("Memory size must be specified as xK\n");
+    return SCPE_ARG | SCPE_NOMESSAGE;
+}
+
+static t_stat cpu_resize_memory(UNIT *uptr, int32 value, CONST char *cptr, void *desc) {
+    uint32 size, result, i;
+    if (cptr == NULL) {
+        sim_printf("Memory size must be provided as SET CPU RESIZEMEMORY=xK\n");
+        return SCPE_ARG | SCPE_NOMESSAGE;
+    }
+    result = sscanf(cptr, "%i%n", &size, &i);
+    if ((result == 1) && (cptr[i] == 'K') && ((cptr[i + 1] == 0) ||
+            ((cptr[i + 1] == 'B') && (cptr[i + 2] == 0))))
+        return set_size(size, FALSE);
+    sim_printf("Memory size must be specified as xK\n");
+    return SCPE_ARG | SCPE_NOMESSAGE;
+}
+
+static t_stat m68k_set_chiptype(UNIT* uptr, int32 value, CONST char* cptr, void* desc) {
+
+    if (value == m68kvariant) {
+        if (cpu_unit.flags & UNIT_CPU_VERBOSE)
+            sim_printf("M68K Variant unchanged\n");
+        return SCPE_OK;
+    }
+
+    m68kvariant = value;
+    return SCPE_OK;
+}
+
+static t_stat cpu_set_hist(UNIT *uptr, int32 val, CONST char *cptr, void *desc) {
+    uint32 i, lnt;
+    t_stat r;
+
+    if ((chiptype >= 0) && (chiptype != CHIP_TYPE_8080) && (chiptype != CHIP_TYPE_Z80)) {
+        sim_printf("History not supported for chiptype: %s\n",
+               (chiptype < NUM_CHIP_TYPE) ? cpu_mod[chiptype].mstring : "????");
+        return SCPE_NOFNC;
+    }
+
+    /*
+    ** If cptr is NULL, reset ring buffer ("SET HISTORY")
+    */
+    if (cptr == NULL) {
+        if (hst == NULL) {
+            sim_printf("History buffer not enabled.\n");
+            return SCPE_NOFNC;
+        }
+
+        for (i = 0; i < hst_lnt; i++) {
+            hst[i].valid = 0;
+        }
+
+        hst_p = 0;
+
+        return SCPE_OK;
+    }
+
+    /*
+    ** Enable/Resize ring buffer ("SET HISTORY=<n>")
+    */
+    lnt = (uint32) get_uint (cptr, 10, HIST_MAX, &r);
+
+    if ((r != SCPE_OK) || (lnt && (lnt < HIST_MIN))) {
+        sim_printf("History buffer minimum/maximum size: %d/%d\n", HIST_MIN, HIST_MAX);
+        return SCPE_ARG;
+    }
+
+    /*
+    ** Delete old history buffer
+    */
+    if (hst!=NULL) {
+        free (hst);
+        hst_lnt = 0;
+        hst = NULL;
+    }
+
+    hst_p = 0;
+
+    /*
+    ** If a length was specified, allocate new buffer ("SET HISTORY=<n>" where n>0)
+    */
+    if (lnt) {
+        hst = (insthist_t *) calloc (lnt, sizeof (insthist_t));
+        if (hst == NULL) {
+            return SCPE_MEM;
+        }
+        hst_lnt = lnt;
+    }
+
+    return SCPE_OK;
+}
+
+t_stat cpu_show_hist (FILE *st, UNIT *uptr, int32 val, CONST void *desc)
+{
+    int32 k, di, lnt;
+    CONST char *cptr = (CONST char *) desc;
+    t_stat r;
+    insthist_t *h;
+
+    if ((chiptype != CHIP_TYPE_8080) && (chiptype != CHIP_TYPE_Z80)) {
+        sim_printf("History not supported for chiptype: %s\n",
+            (0 <= chiptype) && (chiptype < NUM_CHIP_TYPE) ?
+            cpu_mod[chiptype].mstring : "????");
+        return SCPE_NOFNC;
+    }
+
+    if (hst_lnt == 0) {
+        return SCPE_NOFNC;                    /* enabled? */
+    }
+
+    if (cptr) {
+        lnt = (int32) get_uint (cptr, 10, hst_lnt, &r);
+
+        if ((r != SCPE_OK) || (lnt == 0)) {
+            return SCPE_ARG;
+        }
+    } else {
+        lnt = hst_lnt;
+    }
+
+    di = hst_p - lnt;
+
+    if (di < 0) di = di + hst_lnt;
+
+    for (k = 0; k < lnt; k++) {
+        if (stop_cpu) {                              /* Control-C (SIGINT) */
+            stop_cpu = FALSE;
+            break;                                   /* abandon remaining output */
+        }
+        h = &hst[(di++) % hst_lnt];
+
+        if (h->valid) {                              /* valid entry? */
+            if (chiptype == CHIP_TYPE_8080) {
+                /*
+                ** Use DDT output:
+                ** CfZfMfEfIf A=bb B=dddd D=dddd H=dddd S=dddd P=dddd inst
+                */
+                fprintf(st, "CPU: C%dZ%dM%dE%dI%d A=%02X B=%04X D=%04X H=%04X S=%04X P=%04X ",
+                    TSTFLAG2(h->af, C),
+                    TSTFLAG2(h->af, Z),
+                    TSTFLAG2(h->af, S),
+                    TSTFLAG2(h->af, P),
+                    TSTFLAG2(h->af, H),
+                    HIGH_REGISTER(h->af), h->bc, h->de, h->hl, h->sp, h->pc);
+                fprint_sym (st, h->pc, h->op, &cpu_unit, SWMASK ('M'));
+                fprintf(st, "\n");
+            } else {    /* Z80 */
+                /*
+                ** Use DDT/Z output:
+                */
+                fprintf(st, "CPU: C%dZ%dS%dV%dH%dN%d A =%02X BC =%04X DE =%04X HL =%04X S =%04X P =%04X ",
+                    TSTFLAG2(h->af, C),
+                    TSTFLAG2(h->af, Z),
+                    TSTFLAG2(h->af, S),
+                    TSTFLAG2(h->af, P),
+                    TSTFLAG2(h->af, H),
+                    TSTFLAG2(h->af, N),
+                    HIGH_REGISTER(h->af), h->bc, h->de, h->hl, h->sp, h->pc);
+                fprint_sym (st, h->pc, h->op, &cpu_unit, SWMASK ('M'));
+                fprintf(st, "\n");
+                fprintf(st, "                  A'=%02X BC'=%04X DE'=%04X HL'=%04X IX=%04X IY=%04X ",
+                    HIGH_REGISTER(h->af1), h->bc1, h->de1, h->hl1, h->ix, h->iy);
+                fprintf(st, "\n");
+            }
+        }
+    }
+
+    return SCPE_OK;
 }
 
 t_value altairz80_pc_value (void) {
@@ -6800,7 +7263,7 @@ t_value altairz80_pc_value (void) {
 
 /* AltairZ80 Simulator initialization */
 void altairz80_init(void) {
-    cpu_clear();
+    cpu_clear(TRUE);
     sim_vm_pc_value = &altairz80_pc_value;
 /* altairz80_print_tables(); */
 }
@@ -6858,6 +7321,8 @@ t_stat sim_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag) {
     char gbuf[CBUFSIZE];
     if (chiptype == CHIP_TYPE_M68K)
         return sim_load_m68k(fileref, cptr, fnam, flag);
+    if (sim_switches & SWMASK ('H'))
+        return cpu_hex_load(fileref, cptr, fnam, flag);
     if (flag) {
         result = get_range(NULL, cptr, &lo, &hi, 16, ADDRMASKEXTENDED, 0);
         if (result == NULL)
@@ -6867,8 +7332,7 @@ t_stat sim_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag) {
                 return SCPE_IOERR;
         }
         sim_printf("%d byte%s dumped [%x - %x] to %s.\n", PLURAL(hi + 1 - lo), lo, hi, fnam);
-    }
-    else {
+    } else {
         if (*cptr == 0)
             addr = (chiptype == CHIP_TYPE_8086) ? PCX_S : PC_S;
         else {
@@ -6876,8 +7340,7 @@ t_stat sim_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag) {
             if (strcmp(gbuf, "ROM") == 0) {
                 addr = (chiptype == CHIP_TYPE_8086) ? PCX_S : PC_S;
                 makeROM = TRUE;
-            }
-            else {
+            } else {
                 addr = strtotv(cptr, &result, 16) & ADDRMASKEXTENDED;
                 if (cptr == result)
                     return SCPE_ARG;
@@ -6916,6 +7379,71 @@ t_stat sim_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag) {
     return SCPE_OK;
 }
 
+/* cpu_hex_load will load an Intel hex file into RAM.
+   Based on HEX2BIN by Mike Douglas
+   https://deramp.com/downloads/misc_software/hex-binary utilities for the PC/
+*/
+static t_stat cpu_hex_load(FILE *fileref, CONST char *cptr, CONST char *fnam, int flag) {
+    char linebuf[1024], datastr[1024], *bufptr;
+    int32 bytecnt, rectype, databyte, chksum, line = 0, cnt = 0;
+    t_addr addr, org = 0;
+
+    while (!feof(fileref)) {
+        if (fgets(linebuf, sizeof(linebuf), fileref) == NULL)
+            break;
+
+        line++;
+
+        /* Strip EOL characters */
+        if ((bufptr = strchr(linebuf, '\r')) != NULL) {
+            *bufptr = '\0';
+        }
+        if ((bufptr = strchr(linebuf, '\n')) != NULL) {
+            *bufptr = '\0';
+        }
+
+        if (strlen(linebuf) == 0)
+            continue;
+
+        if (sscanf(linebuf, ":%2x%4x%2x%s", &bytecnt, &addr, &rectype, datastr) != 4) {
+            return sim_messagef(SCPE_IERR, "Hex file format error at line %d\n", line);
+        }
+        chksum = bytecnt + (addr >> 8) + (addr & 0xff) + rectype;
+
+        bufptr = datastr;
+
+        /* Ensure datastr is NULL-terminated. */
+        datastr[sizeof(datastr) - 1] = '\0';
+
+        if ((rectype == 0) && (bytecnt > 0) && (addr+bytecnt <= MAXMEMORY)) {
+            if (cnt == 0)
+                org = addr;
+
+            do {
+                if (sscanf(bufptr, "%2x", &databyte) != 1) {
+                    return sim_messagef(SCPE_IERR, "Hex file format error at line %d\n", line);
+                }
+                bufptr += 2;
+
+                PutBYTE(addr++, databyte);
+
+                chksum += databyte;
+                cnt++;
+            } while (--bytecnt != 0);
+
+            if (sscanf(bufptr, "%2x", &databyte) != 1) {            /* checksum byte */
+                return sim_messagef(SCPE_IERR, "Hex file format error at line %d\n", line);
+            }
+
+            if (0 != ((chksum+databyte) & 0xff)) {
+                return sim_messagef(SCPE_IERR, "Checksum error at line %d\n   %s\n", line, linebuf);
+            }
+        }
+    }
+
+    return sim_messagef(SCPE_OK, "%d byte%s loaded at %x.\n", PLURAL(cnt), org);
+}
+
 void cpu_raise_interrupt(uint32 irq) {
     extern void cpu8086_intr(uint8 intrnum);
 
@@ -6923,6 +7451,113 @@ void cpu_raise_interrupt(uint32 irq) {
         cpu8086_intr(irq);
     } else if (cpu_unit.flags & UNIT_CPU_VERBOSE) {
         sim_printf("Interrupts not fully supported for chiptype: %s\n",
-               (chiptype < NUM_CHIP_TYPE) ? cpu_mod[chiptype].mstring : "????");
+            (0 <= chiptype) && (chiptype < NUM_CHIP_TYPE) ?
+            cpu_mod[chiptype].mstring : "????");
     }
 }
+
+static t_addr disp_addr = 0;
+
+static t_stat cpu_cmd_memory(int32 flag, const char *cptr) {
+    char abuf[16];
+    t_addr lo, hi, last;
+    t_value byte;
+
+    if (get_range(NULL, cptr, &lo, &hi, 16, MEMORYMASK, 0) == NULL) {
+        lo = hi = disp_addr;
+    }
+    else {
+        disp_addr = lo & ~(0x0f);
+    }
+
+    if (hi == lo) {
+        hi = (lo & ~(0x0f)) + 0xff;
+    }
+
+    last = hi | 0x00000f;
+
+    while (disp_addr <= last && disp_addr <= MEMORYMASK) {
+
+        if (!(disp_addr & 0x0f)) {
+            if (MEMORYSIZE <= 0x10000) {
+                sim_printf("%04X ", disp_addr);
+            }
+            else {
+                sim_printf("%02X:%04X ", disp_addr >> 16, disp_addr & 0xffff);
+            }
+        }
+
+        if (disp_addr < lo || disp_addr > hi) {
+            sim_printf("   ");
+            abuf[disp_addr & 0x0f] = ' ';
+        }
+        else {
+            cpu_ex(&byte, disp_addr, &cpu_unit, 0);
+            sim_printf("%02X ", byte);
+            abuf[disp_addr & 0x0f] = sim_isprint(byte) ? byte : '.';
+        }
+
+        if ((disp_addr & 0x000f) == 0x000f) {
+            sim_printf("%16.16s\n", abuf);
+        }
+
+        disp_addr++;
+    }
+
+    if (disp_addr > MEMORYMASK) {
+        disp_addr = 0;
+    }
+
+    return SCPE_OK | SCPE_NOMESSAGE;
+}
+
+static t_stat cpu_cmd_reg(int32 flag, CONST char *cptr)
+{
+    t_value op[INST_MAX_BYTES];
+    int i;
+
+    if (chiptype != CHIP_TYPE_8080 && chiptype != CHIP_TYPE_Z80) {
+        sim_printf("REG requires 8080 or Z80 CPU\n");
+        return SCPE_NOFNC;
+    }
+
+    for (i = 0; i < INST_MAX_BYTES; i++) {
+        op[i] = GetBYTE(PC_S + i);
+    }
+
+    if (chiptype == CHIP_TYPE_8080) {
+        /*
+        ** Use DDT output:
+        ** CfZfMfEfIf A=bb B=dddd D=dddd H=dddd S=dddd P=dddd inst
+        */
+        sim_printf("C%dZ%dM%dE%dI%d A=%02X B=%04X D=%04X H=%04X S=%04X P=%04X ",
+            TSTFLAG2(AF_S, C),
+            TSTFLAG2(AF_S, Z),
+            TSTFLAG2(AF_S, S),
+            TSTFLAG2(AF_S, P),
+            TSTFLAG2(AF_S, H),
+            HIGH_REGISTER(AF_S), (uint16) BC_S, (uint16) DE_S, (uint16) HL_S, (uint16) SP_S, (uint16) PC_S);
+        fprint_sym (stdout, PC_S, op, &cpu_unit, SWMASK ('M'));
+    } else {    /* Z80 */
+        /*
+        ** Use DDT/Z output:
+        */
+        sim_printf("C%dZ%dS%dV%dH%dN%d A =%02X BC =%04X DE =%04X HL =%04X S =%04X P =%04X ",
+            TSTFLAG2(AF_S, C),
+            TSTFLAG2(AF_S, Z),
+            TSTFLAG2(AF_S, S),
+            TSTFLAG2(AF_S, P),
+            TSTFLAG2(AF_S, H),
+            TSTFLAG2(AF_S, N),
+            HIGH_REGISTER(AF_S), (uint16) BC_S, (uint16) DE_S, (uint16) HL_S, (uint16) SP_S, (uint16) PC_S);
+        fprint_sym (stdout, PC_S, op, &cpu_unit, SWMASK ('M'));
+        sim_printf("\n");
+        sim_printf("             A'=%02X BC'=%04X DE'=%04X HL'=%04X IX=%04X IY=%04X",
+            HIGH_REGISTER(AF1_S), (uint16) BC1_S, (uint16) DE1_S, (uint16) HL1_S, (uint16) IX_S, (uint16) IY_S);
+    }
+
+    sim_printf("\n");
+
+    return SCPE_OK | SCPE_NOMESSAGE;
+}
+

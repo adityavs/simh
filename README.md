@@ -1,14 +1,15 @@
 # SIMH v4.0 - 19-01 Current
 
 [![Coverity Scan Build Status](https://scan.coverity.com/projects/11982/badge.svg)](https://scan.coverity.com/projects/simh)
-[![Build Status](https://travis-ci.org/simh/simh.svg)](https://travis-ci.org/simh/simh)
-[![AppVeyor](https://ci.appveyor.com/api/projects/status/github/simh/simh)](https://ci.appveyor.com/project/simh/simh/history)
+[![AppVeyor CI Build Status](https://ci.appveyor.com/api/projects/status/github/simh/simh)](https://ci.appveyor.com/project/simh/simh/history)
 
 ## Table of Contents:
+[WHAT'S NEW since the Open SIMH fork](#whats-new-since-the-open-simh-fork)  
 [WHAT'S NEW since simh v3.9](#whats-new-since-simh-v39)  
 . . [New Simulators](#new-simulators)  
 . . [Simulator Front Panel API](#simulator-front-panel-api)  
 . . [New Functionality](#new-functionality)  
+. . . . [DDCMP Synchronous host physical device support - framer](#ddcmp-synchronous-host-physical-device-support---framer)  
 . . . . [Remote Console Facility](#remote-console-facility)  
 . . . . [VAX/PDP11 Enhancements](#vaxpdp11-enhancements)  
 . . . . [PDP11 Specific Enhancements](#pdp11-specific-enhancements)  
@@ -44,11 +45,98 @@
 . . . . . . [VMS](#vms)  
 . . [Problem Reports](#problem-reports)  
 
+## WHAT'S NEW since the Open SIMH fork
+
+All Simulator updates on Open SIMH will be present in this repository, and any changes to the master branch code in this repository authored by anyone except Mark Pizzolato may be posted as pull requests on the Open simh repo.
+
+Simulator binaries for x86 Linus, x86 macOS, and Windows for all recent changes are available at https://github.com/simh/Development-Binaries
+
+### Mark Pizzolato's changes only present in the simh/simh repo and not present in the Open SIMH repo:
+
+#### Visible changes to SCP (the simulator framework or command execution environment)
+
+- Add descriptive messages for cases when NOPARAM status is returned.
+- Avoid excessive DO command context lines when commands produce multiple lines of output.
+- Support has been added to allow for optional per device unit tests to exist and to invoke them at simulator startup.
+- Add support for generic bit field packing and unpacking during buffer copying.
+- Display count of units when all units are disabled.
+- Support to display all SCP visible filenames via relative paths and use those in SAVEd state.
+- ZAP command can be aborted by a Control-C.
+- Display current NOAUTOSIZE status in SHOW VERSION output.
+- Extend logical name support to include optional unique names for units as well as devices.
+- Add extended register sanity checks including duplicate name detection.  Fixed simulator devices with duplicate register names.
+- Simulators with video devices that may be enabled, no longer disable the screen saver until the video display is presented.  Optionally enabling or disabling the OS screen saver by an environment variable.
+- More readable output of SHOW <dev>|<unit> with variable sized DEVICE and UNIT names.
+- Automatic Cryllic Font detection in BESM6 simulator at runtime rather than build time.  More relevant for distribution binaries.
+- Built-in command history and tab file name completion previously done by GPL readline now done by BSD licensed library available on all platforms (especially Windows).
+- Robust register sanity checking for all register definition macros.
+- When building on windows, the windows-build dependency libraries are automatically downloaded even if git is not available.
+- Extended video component version information displayed in SHOW VERSION output.
+- Add a global SET AUTOZAP command or per drive SET <unit> AUTOZAP which removes metadata from disk containers at detach time if the container has metadata.
+- DISKINFO command displays disk container metadata (if present) and container size along with detected file system information if a known file system type is present.
+- makefile builds which have potentially useful dependencies not found will prompt to install these components prior to building.  MacOS Brew dependencies can be directly done from within the makefile.  Other platforms (or package management systems) which require root access to install will display the appropriate package management commands and and exit.  Support for macOS (HomeBrew and MacPorts), Linux (Ubuntu/Debian, RedHat/Fedora), NetBSD, FreeBSD, OpenBSD.
+- SHOW VERSION show the host system type that build the runing simulator when it is not the same as the current host system.
+- Support for building simulators without built-in boot or ROM code when building with DONT_USE_INTERNAL_ROM is defined, but to automatically and transparently fetch the needed ROM or other boot code when it is needed.  This is possibly useful for systems which don't want to distribute simulators with build-in binary code which may have unknown copyright status.
+- Reasonable output produced for all simulators from HELP BOOT.
+- Fix occasional hang of IBM1130 simulator while building with Visual Studio.
+- Building with the simh makefile can optionally compile each source file separately and store the compiled result.   This approach lends itself to quicker building for folks who are developing new simulators or new simulator modules.  This was requested and discussed in #697.  Invoking make with BUILD_SEPARATE=1 on the make command line or as an exported environment variable will achieve separate compiles.  Invoking make with QUIET=1 on the make command line or as an exported environment variable will summary output of activities being performed instead of full compiler commands.
+- TAPE and SCSI libraries have been extended to fully support partial record reads of fixed sized records which may contain multiple records in recorded data.  Images of this type are common for QIC tape archives generally available on bitsavers and elsewhere.  Attach time checking on simulated QIC tape devices reports possible problems that may occur.
+- Appveyor CI/CD builds of all simulators for Linux, macOS and Windows platforms.
+- All the available simulator defined environment variables are documented in the help and sim_doc document file.
+- SET CONSOLE TELNET=CONNECT will start a telnet session to the simulator console in a separate window.
+- Support for building on systems with the gameoftrees.org (got) source control system.
+- Frontpanel API improvements, document clarifications and bug fixes.
+- Added a SET CLOCK NOCALIBRATE mode.  
+    NOCALIBRATE mode allows all activity of a simulator run to occur with precisely consistent event timing.  In this mode, every clock tick takes precisely the same number of instructions/cycles.  Likewise, the polling activities for MUX or other poll oriented devices occurs after precisely the same number of instructions/cycles executed.  As a consequence of this mode, no effort to align simulated clock ticks (and simulated access to wall clock time) is made.
+    
+    This mode will often be useful for running diagnostics which expect a particular relationship between perceived wall clock and instruction times.  It might also be useful for running test scripts which may want to compare output of previous executions to to current execution or to compare execution on arbitrarily different host computers.  It will also be useful when running under a host system debugger which might produce confusing results when various wall clock pause times when stopping at breakpoints.
+    
+    In NOCALIBRATE mode, the operator gets to specify the pseudo execution rate along with the base wall clock time that access to pseudo wall clock accesses returns.
+- All removable devices get detached on a media unload without regard to data access format (SIMH, VHD or RAW).  
+- Various failing bugs in tape detach logic are fixed.
+- Clean building on Android Termux.
+- Proper line editing and tab filename completion behavior on all Unix and Windows platforms.
+- Simulators with video displays have a working SCREENSHOT command.
+- VHD Support for Differencing Disks has been corrected.
+- Attach time disk container copy support between dissimilar storage formats (VHD<->SIMH).  Previously container copy operations were only supported between identical format containers (SIMH<->SIMH, and VHD<->VHD).
+- DISKINFO command provides more useful metadata information and file system verification with full support for VHD Differencing Disks.
+- Simulator THROTTLING can only be enabled once per simulator run.  This avoids potential errant behaviors when arbitrarily switching throttling settings.
+
+#### Changes to the PDP-11 and VAX simulators also not in the Open SIMH repo
+
+- All VAXen: Correct HELP CPU to properly describe model specific LOAD options for ROM and NVRAM.
+- Add 2.11 BSD and NetBSD file system recognizers.
+- Add memory details and behavior description to the MicroVAX 3900 HELP CPU output.
+- Unibus and Qbus autoconfiguration disabling has been relaxed somewhat.  Previously, any "SET <device> ADDRESS= (or VECTOR=)" command would automatically disable autoconfigure for the rest of the simulator session.  This behavior has been relaxed so that autoconfigure will only be disabled if the specified ADDRESS or VECTOR value is different from the value previously set by the initial autoconfigure.
+- Aggressive validation of Unibus and Qbus ADDRESS and VECTOR values prior to execution starting due to a BOOT command.
+- Fixed bug in devices that use sim_disk which deallocated a file transfer buffer on detach.
+- Metadata is implemented on all VAX and PDP11 disk devices when NOAUTOSIZE is not specified.
+- Full support for using disk containers with metadata between different system and device types where it makes sense.
+- VHD disk formats are available on all disk types (including floppy or DECtape devices).
+- Properly size RY drives which also don't have DEC144
+- Properly name RQ extended units beyond the initial default units.
+- HELP CPU shows supported breakpoint types.
+- Add device support for DL11-C/DL11-D/DL11-E/DLV11-J in addition to the original KL11/DL11-A/DL11-B/DL11-E/DL11-F support.  These new devices have different bus address ranges and can coexist with the original DL devices.  The new devices are DLCJI and DLCJO and are managed identically to the original DLI and DLO devices.
+- All improvements and fixes to the PDP11 simulator from simh Version 3.12-3 release and beyond.
+- MicroVAX I has unsupported devices (TQ, TS, and VH) removed.
+- VAX750, VAX780, VAX8600 and PDP11 support additional Massbus disks on DEVICE RPB.
+- VAXStation I is now, once again, working.
+- MicroVAX I/VAXStation I has been enhanced to dynamically look for its secondary bootstrap program (SYSBOOT.EXE) from both [SYSEXE]SYSBOOT.EXE and [SYS0.SYSEXE]SYSBOOT.EXE.
+- PDP11 now has working support for RC and RF expandable platter based disk drives.
+- Properly set asynchronous interrupt latency in all VAX simulators.
+- MicroVAX I simulator boots from oldest MicroVMS media due to the addition of RQDX1 disk controller type.
+- MSCP Media-Id information and drive geometry information is available for all attached disk containers.
+
+### All relevant changes in the simh v3.12-4 release have been merged into this repo
+
+### Bill Beech has made significant enhancements and bug fixes to the SWTP simulators along with a new disk controller from Roberto Sancho Villa
+
+
 ## WHAT'S NEW since simh v3.9
 
 ### New Simulators
 
-#### Seth Morabito has implemented a AT&T 3B2 simulator.
+#### Seth Morabito has implemented AT&T 3B2-400 and 3B2-700 simulators.
 
 #### Leonid Broukhis and Serge Vakulenko have implemented a simulator for the Soviet mainframe BESM-6 computer.
 
@@ -82,13 +170,13 @@
 
 #### Richard Cornwell has implemented the IBM 701, IBM 704, IBM 7010/1410, IBM 7070/7074, IBM 7080/702/705/7053 and IBM 7090/7094/709/704 simulators.
 
-#### Richard Cornwell has implemented the PDP6, PDP10-KA, PDP10-KI and PDP10-KL simulators.
+#### Richard Cornwell has implemented the PDP6, PDP10-KA, PDP10-KI, PDP10-KL and PDP10-KS simulators.  With the differences merely being some device name changes, the PDP10-KS should be compatible with Bob Supnik's original PDP10 simulator.
 
 #### Dave Bryan has implemented an HP-3000 Series III simulator.
 
-#### Updated AltairZ80 simulator from Peter Schorn.
-
 #### Updated HP2100 simulator from Dave Bryan.
+
+#### Updated AltairZ80 simulator from Peter Schorn.
 
 #### Sigma 5, 6 & 7 simulator from Bob Supnik
 
@@ -100,13 +188,25 @@
 
 #### Hans-Åke Lund has implemented an SCELBI (SCientic-ELectronics-BIology) simulator.
 
+#### IBM 650 simulator from Roberto Sancho Villa
+
+#### Jim Bevier has implemented a SEL32 simulator.
+
+#### Updates to the Unibus DUP & Qbus DPV device by Trevor Warwick
+
+Support for Phase V DECnet connections on VAX Unibus and Qbus systems and the addition of support for the DPV11 for Qbus VAX systems.
+
 ### New Host Platform support - HP-UX and AIX
 
 ### Simulator Front Panel API
 
-The sim_frontpanel API provides a programmatic interface to start and control any simulator without any special additions to the simulator code.
+The sim_frontpanel API provides a programmatic interface to start and control any simulator without any special additions to the simulator code or changes to the SCP framework.
 
 ### New Functionality
+
+#### DDCMP Synchronous host physical device support - framer
+Paul Koning has implemented a USB hardware device which can interface transport DDCMP packets across a synchronous line 
+to physical host systems with native synchronous devices or other simulators using framer devices.
 
 #### Remote Console Facility
 A new capability has been added which allows a TELNET Connection to a user designated port so that some out of band commands can be entered to manipulate and/or adjust a running simulator.  The commands which enable and control this capability are SET REMOTE TELNET=port, SET REMOTE CONNECTIONS=n, SET REMOTE TIMEOUT=seconds, and SHOW REMOTE.
@@ -229,7 +329,7 @@ Host platforms which have libSDL2 available can leverage this functionality.
     RAW Disk Access (including CDROM)
     Virtual Disk Container files, including differencing disks
     File System type detection to accurately autosize disks.
-    Recognized file systems are: DEC ODS1, DEC ODS2, DEC RT11, DEC RSX11, Ultrix Partitions
+    Recognized file systems are: DEC ODS1, DEC ODS2, DEC RT11, DEC RSTS, DEC RSX11, Ultrix Partitions, ISO 9660, BSD 2.11 partitions and NetBSD partitions
 
 #### Tape Extensions
     AWS format tape support
@@ -409,6 +509,8 @@ Device simulator authors can easily schedule their device polling activities to 
     GO UNTIL breakpoint              Establish the breakpoint specified and go until it is encountered
     GO UNTIL "output-string" ...     Establish the specified "output-string" as an EXPECT and go until it is encountered.
     RUNLIMIT						 Bound simulator execution time
+    TAR                              Manipulate file archives
+    CURL                             Access URLs from the web
 
 #### Command Processing Enhancements
 
@@ -458,6 +560,23 @@ Built In variables %DATE%, %TIME%, %DATETIME%, %LDATE%, %LTIME%, %CTIME%, %DATE_
           %SIM_VERBOSE%       The Verify/Verbose mode of the current Do command file
           %SIM_QUIET%         The Quiet mode of the current Do command file
           %SIM_MESSAGE%       The message display status of the current Do command file
+          %SIM_NAME%          The name of the current simulator
+          %SIM_BIN_NAME%      The program name of the current simulator
+          %SIM_BIN_PATH%      The program path that invoked the current simulator
+          %SIM_OSTYPE%        The Operating System running the current simulator
+          %SIM_RUNTIME%       The Number of simulated instructions or cycles performed
+          %SIM_RUNTIME_UNITS% The units of the SIM_RUNTIME value
+          %SIM_REGEX_TYPE%    The regular expression type available
+          %SIM_MAJOR%         The major portion of the simh version
+          %SIM_MINOR%         The minor portion of the simh version
+          %SIM_PATCH%         The patch portion of the simh version
+          %SIM_DELTA%         The delta portion of the simh version
+          %SIM_VM_RELEASE%    An optional VM specific release version
+          %SIM_VERSION_MODE%  The release mode (Current, Alpha, Beta)
+          %SIM_GIT_COMMIT_ID% The git commit id of the current build
+          %SIM_GIT_COMMIT_TIME%  The git commit time of the current build
+          %SIM_RUNLIMIT%      The current execution limit defined
+          %SIM_RUNLIMIT_UNITS% The units of the SIM_RUNLIMIT value (instructions, cycles or time)
           
    Environment variable lookups are done first with the precise name between 
    the % characters and if that fails, then the name between the % characters
@@ -523,35 +642,43 @@ functionality.
 
 ###### OS X - Dependencies
 
-The MacPorts package manager is available to provide these external packages.  Once MacPorts is installed, these commands will install the required dependent packages:
+The HomeBrew package manager can be used to provide these packages:
 
-    # port install vde2
-    # port install libsdl2
-    # port install libsdl2_ttf
+    $ brew install vde pcre libedit sdl2 libpng zlib sdl2_ttf make
 
 OR
 
-The HomeBrew package manager can be used to provide these packages:
+The MacPorts package manager is available to provide these external packages.  Once MacPorts is installed, this commands will install the required dependent packages:
 
-    $ brew install vde
-    $ brew install sdl2
-    $ brew install sdl2_ttf
+    # port install vde2 pcre libedit libsdl2 libpng zlib libsdl2_ttf gmake
 
 ###### Linux - Dependencies
 
 Different Linux distributions have different package management systems:
 
-Ubuntu:
+Ubuntu/Debian:
 
-    # apt-get install libpcap-dev
-    # apt-get install libpcre3-dev
-    # apt-get install vde2
-    # apt-get install libsdl2
-    # apt-get install libsdl2_ttf
+    # apt-get install gcc libpcap-dev libvdeplug-dev libpcre3-dev libedit-dev libsdl2-dev libpng-dev libsdl2-ttf-dev
+
+Fedora/RedHat:
+
+    # yum install gcc libpcap-devel pcre-devel libedit-devel SDL2-devel libpng-devel zlib-devel SDL2_ttf-devel
+
+###### NetBSD - Dependencies
+
+    # pkgin install pcre editline SDL2 png zlib SDL2_ttf gmake
+
+###### FreeBSD - Dependencies
+
+    # pkg install pcre libedit sdl2 png sdl2_ttf gmake
+
+###### OpenBSD - Dependencies
+
+    # pkg_add pcre sdl2 png sdl2-ttf gmake
 
 #### Windows
 
-Compiling on windows is supported with recent versions of Microsoft Visual Studio (Standard or Express) and using GCC via the MinGW environment.  Things may also work under Cygwin, but that is not the preferred windows environment.  Not all features will be available as well as with either Visual Studio or MinGW.
+Compiling on windows is supported with recent versions of Microsoft Visual Studio (Standard or Express) and deprecated using GCC via the MinGW32 environment.  Things may also work under Cygwin, but that is not the preferred windows environment.  Not all features will be available when building with MinGW32 or Cygwin.
 
 ##### Required related files
 The file https://github.com/simh/simh/blob/master/Visual%20Studio%20Projects/0ReadMe_Projects.txt
@@ -562,7 +689,9 @@ The file https://github.com/simh/simh/blob/master/Visual%20Studio%20Projects/0Re
 
 ##### MinGW32
 
-The file https://github.com/simh/simh/blob/master/Visual%20Studio%20Projects/0ReadMe_Projects.txt describes the required steps to use the setup your environment to build using MinGW32.
+
+Building with MinGW32 is deprecated and may be removed in the future since the original motivation for MinGW32 builds was due to there not being a free compiler environment on Windows.  That hasn't been the case for at least 15 years.
+Building with MinGW32 requires the same directory organization and the dependent package support described for Visual Studio in the file https://github.com/simh/simh/blob/master/Visual%20Studio%20Projects/0ReadMe_Projects.txt.  Building with MinGW64 is not supported.
 
 #### VMS
 

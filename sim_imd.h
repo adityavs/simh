@@ -1,9 +1,7 @@
 /*************************************************************************
  *                                                                       *
- * $Id: sim_imd.h 1987 2008-07-08 03:25:57Z hharte $                     *
- *                                                                       *
- * Copyright (c) 2007-2008 Howard M. Harte.                              *
- * http://www.hartetec.com                                               *
+ * Copyright (c) 2007-2022 Howard M. Harte.                              *
+ * https://github.com/hharte                                             *
  *                                                                       *
  * Permission is hereby granted, free of charge, to any person obtaining *
  * a copy of this software and associated documentation files (the       *
@@ -18,35 +16,27 @@
  *                                                                       *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,       *
  * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF    *
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND                 *
- * NONINFRINGEMENT. IN NO EVENT SHALL HOWARD M. HARTE BE LIABLE FOR ANY  *
- * CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,  *
- * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE     *
- * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                *
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-            *
+ * INFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE   *
+ * LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN       *
+ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN     *
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE      *
+ * SOFTWARE.                                                             *
  *                                                                       *
- * Except as contained in this notice, the name of Howard M. Harte shall *
+ * Except as contained in this notice, the names of The Authors shall    *
  * not be used in advertising or otherwise to promote the sale, use or   *
  * other dealings in this Software without prior written authorization   *
- * Howard M. Harte.                                                      *
- *                                                                       *
- * SIMH Interface based on altairz80_hdsk.c, by Peter Schorn.            *
+ * from the Authors.                                                     *
  *                                                                       *
  * Module Description:                                                   *
  *     ImageDisk Disk Image File access module for SIMH, definitions.    *
- *     See: http://www.classiccmp.org/dunfield/img/index.htm             *
+ *     See: http://dunfield.classiccmp.org/img/index.htm                 *
  *     for details on the ImageDisk format and other utilities.          *
- *                                                                       *
- * Environment:                                                          *
- *     User mode only                                                    *
  *                                                                       *
  *************************************************************************/
 
 #ifndef SIM_IMD_H_
 #define SIM_IMD_H_     0
-
-#if !defined(USE_SIM_IMD)
-#error This simulator must be compiled with USE_SIM_IMD defined
-#else
 
 #include "sim_defs.h"
 
@@ -90,6 +80,8 @@ typedef struct {
 #define IMD_MODE_500K_MFM       3
 #define IMD_MODE_300K_MFM       4
 #define IMD_MODE_250K_MFM       5
+
+#define IMD_MAX_SECTSIZE        6
 
 #define IMD_MODE_FM(x)      (x <= IMD_MODE_250K_FM)
 #define IMD_MODE_MFM(x)     (x >= IMD_MODE_500K_MFM)
@@ -139,7 +131,5 @@ extern t_stat trackWrite(DISK_INFO *myDisk,
                uint8 fillbyte,
                uint32 *flags);
 extern t_stat assignDiskType(UNIT *uptr);
-
-#endif /* USE_SIM_IMD */
 
 #endif

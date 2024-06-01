@@ -1,6 +1,6 @@
 /*  altairz80_defs.h: MITS Altair simulator definitions
 
-    Copyright (c) 2002-2014, Peter Schorn
+    Copyright (c) 2002-2023, Peter Schorn
 
     Permission is hereby granted, free of charge, to any person obtaining a
     copy of this software and associated documentation files (the "Software"),
@@ -40,11 +40,13 @@
 #define ADDRMASKEXTENDED        (MAXMEMORY - 1)             /* extended address mask                        */
 #define BANKMASK                (MAXBANKS - 1)              /* bank mask                                    */
 #define MEMORYSIZE              (cpu_unit.capac)            /* actual memory size                           */
+#define MEMORYMASK              (cpu_unit.capac - 1)        /* actual memory size mask                      */
 #define KB                      1024                        /* kilo byte                                    */
 #define KBLOG2                  10                          /* log2 of KB                                   */
 #define ALTAIR_ROM_LOW          0xff00                      /* start address of regular Altair ROM          */
 #define RESOURCE_TYPE_MEMORY    1
 #define RESOURCE_TYPE_IO        2
+#define MAX_INT_VECTORS         32                          /* maximum number of interrupt vectors          */
 
 #define NUM_OF_DSK              16                          /* NUM_OF_DSK must be power of two              */
 #define LDA_INSTRUCTION         0x3e                        /* op-code for LD A,<8-bit value> instruction   */
@@ -62,11 +64,11 @@ typedef enum {
 } ChipType;
 
 /* simulator stop codes */
-#define STOP_HALT       0   /* HALT                                             */
 #define STOP_IBKPT      1   /* breakpoint   (program counter)                   */
 #define STOP_MEM        2   /* breakpoint   (memory access)                     */
 #define STOP_INSTR      3   /* breakpoint   (instruction access)                */
 #define STOP_OPCODE     4   /* invalid operation encountered (8080, Z80, 8086)  */
+#define STOP_HALT       5   /* HALT                                             */
 
 #define UNIT_CPU_V_OPSTOP       (UNIT_V_UF+0)               /* stop on invalid operation                    */
 #define UNIT_CPU_OPSTOP         (1 << UNIT_CPU_V_OPSTOP)
@@ -82,25 +84,10 @@ typedef enum {
 #define UNIT_CPU_STOPONHALT     (1 << UNIT_CPU_V_STOPONHALT)
 #define UNIT_CPU_V_SWITCHER     (UNIT_V_UF+6)               /* switcher 8086 <--> 8080/Z80 enabled          */
 #define UNIT_CPU_SWITCHER       (1 << UNIT_CPU_V_SWITCHER)
-
-#if defined (__linux) || defined (__linux__) || defined(__NetBSD__) || defined (__OpenBSD__) || defined (__FreeBSD__) || defined (__APPLE__) || defined (__hpux) || defined (__CYGWIN__)
-#define UNIX_PLATFORM 1
-#else
-#define UNIX_PLATFORM 0
-#endif
+#define UNIT_CPU_V_PO           (UNIT_V_UF+7)               /* enable programmed output messages            */
+#define UNIT_CPU_PO             (1 << UNIT_CPU_V_PO)
 
 #define ADDRESS_FORMAT          "[0x%08x]"
-
-/* use NLP for new line printing while the simulation is running */
-#if UNIX_PLATFORM
-#define NLP "\r\n"
-#else
-#define NLP "\n"
-#endif
-
-#if (defined (__MWERKS__) && defined (macintosh)) || defined(__DECC)
-#define __FUNCTION__ __FILE__
-#endif
 
 typedef struct {
     uint32 mem_base;    /* Memory Base Address */

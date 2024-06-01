@@ -157,6 +157,13 @@ extern "C" {
 
 #define SIM_KEY_UNKNOWN        200
 
+#define SIM_ALPHA_NONE         1
+#define SIM_ALPHA_BLEND        2
+#define SIM_ALPHA_ADD          3
+#define SIM_ALPHA_MOD          4
+
+typedef struct VID_DISPLAY VID_DISPLAY;
+
 struct mouse_event {
     int32 x_rel;                                          /* X axis relative motion */
     int32 y_rel;                                          /* Y axis relative motion */
@@ -165,11 +172,15 @@ struct mouse_event {
     t_bool b1_state;                                      /* state of button 1 */
     t_bool b2_state;                                      /* state of button 2 */
     t_bool b3_state;                                      /* state of button 3 */
+    DEVICE *dev;                                          /* which device */
+    VID_DISPLAY *vptr;                                    /* which display */
     };
 
 struct key_event {
     uint32 key;                                           /* key sym */
     uint32 state;                                         /* key state change */
+    DEVICE *dev;                                          /* which device */
+    VID_DISPLAY *vptr;                                    /* which display */
     };
 
 typedef struct mouse_event SIM_MOUSE_EVENT;
@@ -178,6 +189,8 @@ typedef struct key_event SIM_KEY_EVENT;
 t_stat vid_open (DEVICE *dptr, const char *title, uint32 width, uint32 height, int flags);
 #define SIM_VID_INPUTCAPTURED       1                       /* Mouse and Keyboard input captured (calling */
                                                             /* code responsible for cursor display in video) */
+#define SIM_VID_IGNORE_VBAR         2                       /* ignore video buffer aspect ratio */
+#define SIM_VID_RESIZABLE           4                       /* video screen is resizable */
 typedef void (*VID_QUIT_CALLBACK)(void);
 t_stat vid_register_quit_callback (VID_QUIT_CALLBACK callback);
 typedef void (*VID_GAMEPAD_CALLBACK)(int, int, int);
@@ -191,16 +204,32 @@ void vid_draw (int32 x, int32 y, int32 w, int32 h, uint32 *buf);
 void vid_beep (void);
 void vid_refresh (void);
 const char *vid_version (void);
-const char *vid_key_name (int32 key);
+const char *vid_key_name (uint32 key);
 t_stat vid_set_cursor (t_bool visible, uint32 width, uint32 height, uint8 *data, uint8 *mask, uint32 hot_x, uint32 hot_y);
 t_stat vid_set_release_key (FILE* st, UNIT* uptr, int32 val, CONST void* desc);
 t_stat vid_show_release_key (FILE* st, UNIT* uptr, int32 val, CONST void* desc);
 t_stat vid_show_video (FILE* st, UNIT* uptr, int32 val, CONST void* desc);
 t_stat vid_show (FILE* st, DEVICE *dptr,  UNIT* uptr, int32 val, CONST char* desc);
 t_stat vid_screenshot (const char *filename);
+t_bool vid_is_fullscreen (void);
+t_stat vid_set_fullscreen (t_bool flag);
 
-extern t_bool vid_active;
+extern int vid_active;
 void vid_set_cursor_position (int32 x, int32 y);        /* cursor position (set by calling code) */
+void vid_set_window_size (VID_DISPLAY *vptr, int32 x, int32 y);            /* window size (set by calling code) */
+
+t_stat vid_open_window (VID_DISPLAY **vptr, DEVICE *dptr, const char *title, uint32 width, uint32 height, int flags);
+t_stat vid_close_window (VID_DISPLAY *vptr);
+t_stat vid_close_all (void);
+uint32 vid_map_rgb_window (VID_DISPLAY *vptr, uint8 r, uint8 g, uint8 b);
+uint32 vid_map_rgba_window (VID_DISPLAY *vptr, uint8 r, uint8 g, uint8 b, uint8 a);
+void vid_draw_window (VID_DISPLAY *vptr, int32 x, int32 y, int32 w, int32 h, uint32 *buf);
+void vid_refresh_window (VID_DISPLAY *vptr);
+t_stat vid_set_cursor_window (VID_DISPLAY *vptr, t_bool visible, uint32 width, uint32 height, uint8 *data, uint8 *mask, uint32 hot_x, uint32 hot_y);
+t_bool vid_is_fullscreen_window (VID_DISPLAY *vptr);
+t_stat vid_set_fullscreen_window (VID_DISPLAY *vptr, t_bool flag);
+void vid_set_cursor_position_window (VID_DISPLAY *vptr, int32 x, int32 y);        /* cursor position (set by calling code) */
+t_stat vid_set_alpha_mode (VID_DISPLAY *vptr, int mode);
 
 /* A device simulator can optionally set the vid_display_kb_event_process
  * routine pointer to the address of a routine.
@@ -226,6 +255,11 @@ extern int (*vid_display_kb_event_process)(SIM_KEY_EVENT *kev);
 #endif
 
 #if defined(USE_SIM_VIDEO) && defined(HAVE_LIBSDL)
+
+#if defined(__APPLE__)
+#define SDL_MAIN_AVAILABLE
+#endif
+
 #include <SDL.h>
 #endif /* HAVE_LIBSDL */
 

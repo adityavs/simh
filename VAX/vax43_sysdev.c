@@ -31,14 +31,10 @@
 
 #include "vax_defs.h"
 #include "sim_ether.h"
-#include <time.h>
 
-#ifdef DONT_USE_INTERNAL_ROM
-#define BOOT_CODE_FILENAME "ka43a.bin"
-#else /* !DONT_USE_INTERNAL_ROM */
 #include "vax_ka43a_bin.h" /* Defines BOOT_CODE_FILENAME and BOOT_CODE_ARRAY, etc */
-#endif /* DONT_USE_INTERNAL_ROM */
 
+const char *boot_code_filename = BOOT_CODE_FILENAME;
 
 t_stat vax43a_boot (int32 flag, CONST char *ptr);
 
@@ -963,7 +959,7 @@ char gbuf[CBUFSIZE];
 
 get_glyph (ptr, gbuf, 0);                           /* get glyph */
 if (gbuf[0] && strcmp (gbuf, "CPU"))
-    return SCPE_ARG;                                /* Only can specify CPU device */
+    return sim_messagef (SCPE_ARG, "Invalid boot device: %s, must specify BOOT CPU or simply BOOT\n", gbuf);
 return run_cmd (flag, "CPU");
 }
 
@@ -984,7 +980,7 @@ conpsl = PSL_IS | PSL_IPL1F | CON_PWRUP;
 if (rom == NULL)
     return SCPE_IERR;
 if (*rom == 0) {                                        /* no boot? */
-    r = cpu_load_bootcode (BOOT_CODE_FILENAME, BOOT_CODE_ARRAY, BOOT_CODE_SIZE, TRUE, 0);
+    r = cpu_load_bootcode (BOOT_CODE_FILENAME, BOOT_CODE_ARRAY, BOOT_CODE_SIZE, TRUE, 0, BOOT_CODE_FILEPATH, BOOT_CODE_CHECKSUM);
     if (r != SCPE_OK)
         return r;
     }
@@ -1061,7 +1057,7 @@ if ((MATCH_CMD(gbuf, "VAXSERVER") == 0) ||
     vs_dev.flags = vs_dev.flags | DEV_DIS;               /* disable mouse */
 #endif
     strcpy (sim_name, "VAXserver 3100 M76 (KA43-A)");
-    reset_all (0);                                       /* reset everything */
+    reset_all_p (0);                                     /* powerup reset everything */
     }
 else if (MATCH_CMD(gbuf, "VAXSTATION") == 0) {
 #if defined(USE_SIM_VIDEO) && defined(HAVE_LIBSDL)
@@ -1071,7 +1067,7 @@ else if (MATCH_CMD(gbuf, "VAXSTATION") == 0) {
     lk_dev.flags = lk_dev.flags & ~DEV_DIS;              /* enable keyboard */
     vs_dev.flags = vs_dev.flags & ~DEV_DIS;              /* enable mouse */
     strcpy (sim_name, "VAXstation 3100 M76 (KA43-A)");
-    reset_all (0);                                       /* reset everything */
+    reset_all_p (0);                                     /* powerup reset everything */
 #else
     return sim_messagef (SCPE_ARG, "Simulator built without Graphic Device Support\n");
 #endif
@@ -1084,7 +1080,7 @@ else if (MATCH_CMD(gbuf, "VAXSTATIONSPX") == 0) {
     lk_dev.flags = lk_dev.flags & ~DEV_DIS;              /* enable keyboard */
     vs_dev.flags = vs_dev.flags & ~DEV_DIS;              /* enable mouse */
     strcpy (sim_name, "VAXstation 3100 M76/SPX (KA43-A)");
-    reset_all (0);                                       /* reset everything */
+    reset_all_p (0);                                     /* powerup reset everything */
 #else
     return sim_messagef (SCPE_ARG, "Simulator built without Graphic Device Support\n");
 #endif

@@ -1,6 +1,6 @@
 /*  altairz80_sys.c: MITS Altair system interface
 
-    Copyright (c) 2002-2014, Peter Schorn
+    Copyright (c) 2002-2023, Peter Schorn
 
     Permission is hereby granted, free of charge, to any person obtaining a
     copy of this software and associated documentation files (the "Software"),
@@ -29,8 +29,7 @@
     03/27/14 -- MWD Add MITS Hard Disk device (mhdsk_dev)
 */
 
-#include "m68k.h"
-#include <ctype.h>
+#include "m68k/m68k.h"
 
 #define SIM_EMAX 6
 
@@ -60,13 +59,38 @@ extern DEVICE selchan_dev;
 extern DEVICE ss1_dev;
 extern DEVICE if3_dev;
 extern DEVICE i8272_dev;
+extern DEVICE ibc_dev;
+extern DEVICE ibc_hdc_dev;
+extern DEVICE ibc_smd_dev;
+extern DEVICE ibctimer_device;
+extern DEVICE ibcrtctimer_device;
 extern DEVICE mdriveh_dev;
 extern DEVICE switchcpu_dev;
 
 extern DEVICE adcs6_dev;
 extern DEVICE hdc1001_dev;
 
+extern DEVICE jade_dev;
 extern DEVICE tarbell_dev;
+extern DEVICE tdd_dev;
+extern DEVICE icom_dev;
+extern DEVICE dj2d_dev;
+extern DEVICE m2sio0_dev;
+extern DEVICE m2sio1_dev;
+extern DEVICE pmmi_dev;
+extern DEVICE hayes_dev;
+extern DEVICE jair_dev;
+extern DEVICE jairs0_dev;
+extern DEVICE jairs1_dev;
+extern DEVICE jairp_dev;
+extern DEVICE mmd_dev;
+extern DEVICE mmdm_dev;
+extern DEVICE sol20_dev;
+extern DEVICE sol20k_dev;
+extern DEVICE sol20t_dev;
+extern DEVICE sol20s_dev;
+extern DEVICE sol20p_dev;
+extern DEVICE vdm1_dev;
 
 extern DEVICE cromfdc_dev;
 extern DEVICE wd179x_dev;
@@ -74,8 +98,10 @@ extern DEVICE n8vem_dev;
 extern DEVICE wdi2_dev;
 
 extern DEVICE scp300f_dev;
+extern DEVICE djhdc_dev;
 
 extern long disasm (unsigned char *data, char *output, int segsize, long offset);
+extern t_stat parse_sym_m68k(char* c, t_addr a, UNIT* u, t_value* val, int32 sw);
 
 void prepareMemoryAccessMessage(const t_addr loc);
 void prepareInstructionMessage(const t_addr loc, const uint32 op);
@@ -109,6 +135,12 @@ DEVICE      *sim_devices[]  = {
     &disk1a_dev, &disk2_dev, &disk3_dev, &ss1_dev, &mdriveh_dev, &selchan_dev, &if3_dev,
     /* Cromemco Devices */
     &cromfdc_dev,
+    /* Integrated Business Computers (IBC) Devices */
+    &ibc_dev,
+    &ibctimer_device,
+    &ibcrtctimer_device,
+    &ibc_hdc_dev,
+    &ibc_smd_dev,
     /* IMSAI Devices */
     &fif_dev,
     /* Micropolis Devices */
@@ -117,8 +149,37 @@ DEVICE      *sim_devices[]  = {
     &mdsa_dev, &mdsad_dev,
     /* Seattle Computer Products Devices */
     &scp300f_dev,
+    /* Jade DD Devices */
+    &jade_dev,
     /* Tarbell Devices */
     &tarbell_dev,
+    &tdd_dev,
+    /* iCOM Devices */
+    &icom_dev,
+    /* Morrow Devices */
+    &dj2d_dev,
+    &djhdc_dev,
+    &mmd_dev,
+    &mmdm_dev,
+    /* Processor Technology Devices */
+    &sol20_dev,
+    &sol20k_dev,
+    &sol20t_dev,
+    &sol20s_dev,
+    &sol20p_dev,
+    &vdm1_dev,
+    /* MITS 88-2SIO */
+    &m2sio0_dev,
+    &m2sio1_dev,
+    /* PMMI MM-103 */
+    &pmmi_dev,
+    /* HAYES MODEM */
+    &hayes_dev,
+    /* JAIR SBC */
+    &jair_dev,
+    &jairs0_dev,
+    &jairs1_dev,
+    &jairp_dev,
     /* Vector Graphic Devices */
     &fw2_dev, &vfdhd_dev,
     /* Single-Board Computers */
@@ -130,12 +191,13 @@ DEVICE      *sim_devices[]  = {
 
 static char memoryAccessMessage[256];
 static char instructionMessage[256];
-const char *sim_stop_messages[] = {
-    "HALT instruction",
+const char *sim_stop_messages[SCPE_BASE] = {
+    "Unknown error",            /* 0 is reserved/unknown */
     "Breakpoint",
     memoryAccessMessage,
     instructionMessage,
-    "Invalid Opcode"
+    "Invalid Opcode",
+    "HALT instruction"
 };
 
 static const char *const Mnemonics8080[] = {
@@ -416,8 +478,7 @@ static int32 DAsm(char *S, const uint32 *val, const int32 useZ80Mnemonics, const
                     Offset = val[B++];
                     J = 1;
                     T = MnemonicsXCB[val[B++]];
-                }
-                else
+                } else
                     T = MnemonicsXX[val[B++]];
                 break;
 
@@ -433,8 +494,7 @@ static int32 DAsm(char *S, const uint32 *val, const int32 useZ80Mnemonics, const
         printHex2(H, val[B++]);
         strlcat(R, H, sizeof (R));
         strlcat(R, T1 + 1, sizeof (R)); /* ok, since T1 is a short sub-string coming from one of the tables */
-    }
-    else
+    } else
         strlcpy(R, T, sizeof (R)); /* ok, since T is a short string coming from one of the tables */
     if ( (P = strchr(R, '%')) ) {
         *P = C;
@@ -448,8 +508,7 @@ static int32 DAsm(char *S, const uint32 *val, const int32 useZ80Mnemonics, const
         printHex2(H, val[B++]);
         strcat(S, H);
         strcat(S, P + 1);
-    }
-    else if ( (P = strchr(R, '@')) ) {
+    } else if ( (P = strchr(R, '@')) ) {
         strncpy(S, R, P - R);
         S[P - R] = '\0';
         if (!J)
@@ -459,24 +518,21 @@ static int32 DAsm(char *S, const uint32 *val, const int32 useZ80Mnemonics, const
         printHex2(H, J);
         strcat(S, H);
         strcat(S, P + 1);
-    }
-    else if ( (P = strchr(R, '$')) ) {
+    } else if ( (P = strchr(R, '$')) ) {
         strncpy(S, R, P - R);
         S[P - R] = '\0';
         Offset = val[B++];
         printHex4(H, (addr + 2 + (Offset & 0x80 ? (Offset - 256) : Offset)) & 0xFFFF);
         strcat(S, H);
         strcat(S, P + 1);
-    }
-    else if ( (P = strchr(R, '#')) ) {
+    } else if ( (P = strchr(R, '#')) ) {
         strncpy(S, R, P - R);
         S[P - R] = '\0';
         printHex4(H, val[B] + 256 * val[B + 1]);
         strcat(S, H);
         strcat(S, P + 1);
         B += 2;
-    }
-    else
+    } else
         strcpy(S, R);
     return(B);
 }
@@ -526,7 +582,7 @@ t_stat fprint_sym(FILE *of, t_addr addr, t_value *val, UNIT *uptr, int32 sw) {
 
         default:
             return SCPE_IERR;
-            
+
     }
     fprintf(of, "%s", disasm_result);
     return 1 - r;
@@ -553,8 +609,7 @@ static int32 numok(char ch, const char **numString, const int32 minvalue,
         else if (ch == '-') {
             sign = -1;
             ch = *(*numString)++;
-        }
-        else
+        } else
             return FALSE;
     }
     if (!(base = checkbase(ch, *numString)))
@@ -672,28 +727,23 @@ static int32 parse_X80(const char *cptr, const int32 addr, uint32 *val, const ch
                 val[1] = (0xff) & number;
                 val[2] = (0xff) & (number >> 8);
                 return -2;              /* two additional bytes returned    */
-            }
-            else if (star >= 0) {
+            } else if (star >= 0) {
                 val[1] = (0xff) & star;
                 return -1;              /* one additional byte returned     */
-            }
-            else if (at > -129)
+            } else if (at > -129)
                 if ((-128 <= at) && (at <= 127)) {
                     val[1] = (int8)(at);
                     return -1;          /* one additional byte returned     */
-                }
-                else
+                } else
                     return SCPE_ARG;
             else if (dollar >= 0) {
                 dollar -= addr + 2;     /* relative translation             */
                 if ((-128 <= dollar) && (dollar <= 127)) {
                     val[1] = (int8)(dollar);
                     return -1;          /* one additional byte returned     */
-                }
-                else
+                } else
                     return SCPE_ARG;
-            }
-            else
+            } else
                 return SCPE_OK;
         }
     }
@@ -716,8 +766,7 @@ static int32 parse_X80(const char *cptr, const int32 addr, uint32 *val, const ch
                 val[2] = (0xff) & number;
                 val[3] = (0xff) & (number >> 8);
                 return -3;              /* three additional bytes returned  */
-            }
-            else
+            } else
                 return -1;              /* one additional byte returned     */
         }
     }
@@ -734,21 +783,17 @@ static int32 parse_X80(const char *cptr, const int32 addr, uint32 *val, const ch
                 val[2] = (0xff) & number;
                 val[3] = (0xff) & (number >> 8);
                 return -3;              /* three additional bytes returned  */
-            }
-            else if ((star >= 0) && (hat >= 0)) {
+            } else if ((star >= 0) && (hat >= 0)) {
                 val[2] = (0xff) & hat;
                 val[3] = (0xff) & star;
                 return -3;              /* three additional bytes returned  */
-            }
-            else if (star >= 0) {
+            } else if (star >= 0) {
                 val[2] = (0xff) & star;
                 return -2;              /* two additional bytes returned    */
-            }
-            else if (hat >= 0) {
+            } else if (hat >= 0) {
                 val[2] = (0xff) & hat;
                 return -2;              /* two additional bytes returned    */
-            }
-            else
+            } else
                 return -1;              /* one additional byte returned     */
         }
     }
@@ -788,18 +833,10 @@ static int32 parse_X80(const char *cptr, const int32 addr, uint32 *val, const ch
 */
 t_stat parse_sym(CONST char *cptr, t_addr addr, UNIT *uptr, t_value *val, int32 sw) {
     static t_bool symbolicInputNotImplementedMessage8086 = FALSE;
-    static t_bool symbolicInputNotImplementedMessageM68K = FALSE;
     if ((sw & (SWMASK('M'))) && (chiptype == CHIP_TYPE_8086)) {
         if (!symbolicInputNotImplementedMessage8086) {
             sim_printf("Symbolic input is not supported for the 8086.\n");
             symbolicInputNotImplementedMessage8086 = TRUE;
-        }
-        return SCPE_NOFNC;
-    }
-    if ((sw & (SWMASK('M'))) && (chiptype == CHIP_TYPE_M68K)) {
-        if (!symbolicInputNotImplementedMessageM68K) {
-            sim_printf("Symbolic input is not supported for the M68K.\n");
-            symbolicInputNotImplementedMessageM68K = TRUE;
         }
         return SCPE_NOFNC;
     }
@@ -811,7 +848,8 @@ t_stat parse_sym(CONST char *cptr, t_addr addr, UNIT *uptr, t_value *val, int32 
         val[0] = (uint32) cptr[0];
         return SCPE_OK;
     }
-    return parse_X80(cptr, addr, val, chiptype == CHIP_TYPE_Z80 ? MnemonicsZ80 : Mnemonics8080);
+    return (chiptype == CHIP_TYPE_M68K ? parse_sym_m68k((char *)cptr, addr, uptr, val, sw) :
+            parse_X80(cptr, addr, val, chiptype == CHIP_TYPE_Z80 ? MnemonicsZ80 : Mnemonics8080));
 }
 
 /* Set Memory Base Address routine */
@@ -933,3 +971,19 @@ t_stat show_iobase(FILE *st, UNIT *uptr, int32 val, CONST void *desc)
     return SCPE_OK;
 }
 
+/* find_unit_index   find index of a unit
+
+   Inputs:
+        uptr    =       pointer to unit
+   Outputs:
+        result  =       index of device
+*/
+int32 find_unit_index(UNIT* uptr)
+{
+    DEVICE *dptr = find_dev_from_unit(uptr);
+
+    if (dptr == NULL)
+        return -1;
+
+    return (uptr - dptr->units);
+}

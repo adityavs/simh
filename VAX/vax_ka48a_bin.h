@@ -1,14 +1,69 @@
 #ifndef ROM_vax_ka48a_bin_H
 #define ROM_vax_ka48a_bin_H 0
 /*
-   VAX/vax_ka48a_bin.h         produced at Wed May 31 00:26:29 2017
-   from VAX/ka48a.bin which was last modified at Thu May 05 23:49:09 2011
+   VAX/vax_ka48a_bin.h         produced at Sun Jul  2 10:11:49 2023
+   from VAX/ka48a.bin which was last modified at Sat Apr 29 15:56:37 2023
    file size: 262144 (0x40000) - checksum: 0xFEBB854D
    This file is a generated file and should NOT be edited or changed by hand.
 */
+#if !defined(BOOT_CODE_SIZE)
 #define BOOT_CODE_SIZE 0x40000
+#define BOOT_CODE_CHECKSUM 0xFEBB854D
 #define BOOT_CODE_FILENAME "ka48a.bin"
+#define BOOT_CODE_FILEPATH "VAX/ka48a.bin"
+#if defined(DONT_USE_INTERNAL_ROM)
+#define BOOT_CODE_ARRAY NULL
+#else
 #define BOOT_CODE_ARRAY vax_ka48a_bin
+#endif
+#define BOOT_CODE_URL NULL
+#endif
+#if !defined(BOOT_CODE_SIZE_1)
+#define BOOT_CODE_SIZE_1 0x40000
+#define BOOT_CODE_CHECKSUM_1 0xFEBB854D
+#define BOOT_CODE_FILENAME_1 "ka48a.bin"
+#define BOOT_CODE_FILEPATH_1 "VAX/ka48a.bin"
+#if defined(DONT_USE_INTERNAL_ROM)
+#define BOOT_CODE_ARRAY_1 NULL
+#else
+#define BOOT_CODE_ARRAY_1 vax_ka48a_bin
+#endif
+#define BOOT_CODE_URL_1 NULL
+#elif !defined(BOOT_CODE_SIZE_2)
+#define BOOT_CODE_SIZE_2 0x40000
+#define BOOT_CODE_CHECKSUM_2 0xFEBB854D
+#define BOOT_CODE_FILENAME_2 "ka48a.bin"
+#define BOOT_CODE_FILEPATH_2 "VAX/ka48a.bin"
+#if defined(DONT_USE_INTERNAL_ROM)
+#define BOOT_CODE_ARRAY_2 NULL
+#else
+#define BOOT_CODE_ARRAY_2 vax_ka48a_bin
+#endif
+#define BOOT_CODE_URL_2 NULL
+#elif !defined(BOOT_CODE_SIZE_3)
+#define BOOT_CODE_SIZE_3 0x40000
+#define BOOT_CODE_CHECKSUM_3 0xFEBB854D
+#define BOOT_CODE_FILENAME_3 "ka48a.bin"
+#define BOOT_CODE_FILEPATH_3 "VAX/ka48a.bin"
+#if defined(DONT_USE_INTERNAL_ROM)
+#define BOOT_CODE_ARRAY_3 NULL
+#else
+#define BOOT_CODE_ARRAY_3 vax_ka48a_bin
+#endif
+#define BOOT_CODE_URL_3 NULL
+#elif !defined(BOOT_CODE_SIZE_4)
+#define BOOT_CODE_SIZE_4 0x40000
+#define BOOT_CODE_CHECKSUM_4 0xFEBB854D
+#define BOOT_CODE_FILENAME_4 "ka48a.bin"
+#define BOOT_CODE_FILEPATH_4 "VAX/ka48a.bin"
+#if defined(DONT_USE_INTERNAL_ROM)
+#define BOOT_CODE_ARRAY_4 NULL
+#else
+#define BOOT_CODE_ARRAY_4 vax_ka48a_bin
+#endif
+#define BOOT_CODE_URL_4 NULL
+#endif
+#if !defined(DONT_USE_INTERNAL_ROM)
 unsigned char vax_ka48a_bin[] = {
 0x31,0xFD,0x1B,0x00,0x02,0x01,0x01,0x04,0x01,0x01,0x01,0x01,0x00,0x01,0x02,0x03,
 0x55,0x55,0x55,0x55,0xAA,0xAA,0xAA,0xAA,0x33,0x33,0x33,0x33,0x40,0x40,0x40,0x40,
@@ -16394,4 +16449,5 @@ unsigned char vax_ka48a_bin[] = {
 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xA9,0x12,0x97,0x00,};
+#endif
 #endif /* ROM_vax_ka48a_bin_H */

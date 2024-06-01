@@ -32,14 +32,15 @@
 #include "sim_console.h"
 
 #define UNIT_CDR        UNIT_ATTABLE | UNIT_RO | UNIT_DISABLE | MODE_029
-#define UNIT_CDP        UNIT_ATTABLE | UNIT_DISABLE | MODE_029
-#define UNIT_LPR        UNIT_ATTABLE | UNIT_DISABLE
+#define UNIT_CDP        UNIT_ATTABLE | UNIT_SEQ | UNIT_DISABLE | MODE_029
+#define UNIT_LPR        UNIT_ATTABLE | UNIT_SEQ | UNIT_DISABLE
 
 #define TMR_RTC         0
 
 #define LINENUM    u3
 #define POS        u4
 #define CMD        u5
+#define LPP        u6
 
 
 /* std devices. data structures
@@ -150,7 +151,7 @@ MTAB                cdr_mod[] = {
 };
 
 REG                 cdr_reg[] = {
-    {BRDATA(BUFF, cdr_buffer, 16, 16, sizeof(cdr_buffer)/sizeof(uint16)), REG_HRO},
+    {CRDATA(BUFF, cdr_buffer, 16, 16, sizeof(cdr_buffer)/sizeof(uint16)), REG_HRO},
     {0}
 };  
 
@@ -177,7 +178,7 @@ MTAB                cdp_mod[] = {
 };
 
 REG                 cdp_reg[] = {
-    {BRDATA(BUFF, cdp_buffer, 16, 16, sizeof(cdp_buffer)/sizeof(uint16)), REG_HRO},
+    {CRDATA(BUFF, cdp_buffer, 16, 16, sizeof(cdp_buffer)/sizeof(uint16)), REG_HRO},
     {0}
 };  
 
@@ -208,7 +209,7 @@ MTAB                lpr_mod[] = {
 };
 
 REG                 lpr_reg[] = {
-    {BRDATA(BUFF, lpr_buffer, 16, 8, sizeof(lpr_buffer)), REG_HRO},
+    {CRDATA(BUFF, lpr_buffer, 16, 8, sizeof(lpr_buffer)), REG_HRO},
     {0}
 };  
 
@@ -405,29 +406,26 @@ cdr_srv(UNIT *uptr) {
                             ch = 015;
                         break;
             case 016:   ch = 035; break; /* Translate = */
-            case 017:   if (image[uptr->POS] == 0x006) /* Translate " */
-                           ch = 037;
-                        break;
+            case 017:   ch = 037; break; /* Translate " */
             case 036:   ch = 016; break;
             case 037:   ch = 0;          /* Handle ? */
                         if (uptr->POS == 0)
                             chan_set_parity(chan);
                         break;
-            case 052:   if (image[uptr->POS] == 0x482) /* Translate ! not equal */
-                            ch = 032; 
+            case 052:   ch = 032;        /* Translate ! not equal */
                         break;
-            case 072:   if (image[uptr->POS] == 0xA00) /* Translate [ */
-                            ch = 074;
-                        else
-                            ch = 036;
-                        break; /* Translate */
             case 074:   ch = 076; break; /* Translate < */
             case 076:   ch = 072; break; /* Translate + */
+            case 077:   ch = 052; break; /* Translate | */
             case 0177:
-                        if (image[uptr->POS] == 0x405) /* Translate { */
-                            ch = 057;
-                        else if (image[uptr->POS] == 0x805) /* Translate } */
+                        if (image[uptr->POS] == 0x805)      /* Translate } */
                             ch = 017;
+                        else if (image[uptr->POS] == 0xE42) /* Translate ] */
+                            ch = 036;
+                        else if (image[uptr->POS] == 0xE82) /* Translate [ */
+                            ch = 074;
+                        else if (image[uptr->POS] == 0xF02) /* Translate ~ */
+                            ch = 077;
                         else {
                             ch = 0;
                             /* Handle invalid punch */
@@ -587,12 +585,13 @@ cdp_srv(UNIT *uptr) {
             case 017:  hol = 0x805; break;  /* } */
             case 032:  hol = 0x482; break;  /* ! */
             case 035:  hol = 0X00A; break;  /* = */
-            case 036:  hol = 0x882; break;  /* ] */
+            case 036:  hol = 0xE42; break;  /* ] */
             case 037:  hol = 0x006; break;  /* " */
-            case 057:  hol = 0x405; break;  /* { */
+            case 052:  hol = 0x806; break;  /* | */
             case 072:  hol = 0x80A; break;  /* + */
-            case 074:  hol = 0xA00; break;  /* [ */
+            case 074:  hol = 0xE82; break;  /* [ */
             case 076:  hol = 0x822; break;  /* < */
+            case 077:  hol = 0xF02; break;  /* ~ */
             default:
                        hol = sim_bcd_to_hol(ch & 077);
             }
@@ -663,6 +662,9 @@ lpr_ini(DEVICE *dptr) {
 
      for(i = 0; i < NUM_DEVS_LPR; i++) {
         lpr_unit[i].CMD = 0;
+        if (lpr_unit[i].LPP == 0) {
+            lpr_unit[i].LPP = 59;
+        }
         sim_cancel(&lpr_unit[i]);
      }
      return SCPE_OK;
@@ -685,7 +687,7 @@ lpr_setlpp(UNIT *uptr, int32 val, CONST char *cptr, void *desc)
     }
     if (i < 20 || i > 100)
         return SCPE_ARG;
-    uptr->capac = i;
+    uptr->LPP = i;
     uptr->LINENUM = 0;
     return SCPE_OK;
 }
@@ -695,7 +697,7 @@ lpr_getlpp(FILE *st, UNIT *uptr, int32 v, CONST void *desc)
 {
     if (uptr == NULL)
         return SCPE_IERR;
-    fprintf(st, "linesperpage=%d", uptr->capac);
+    fprintf(st, "linesperpage=%d", uptr->LPP);
     return SCPE_OK;
 }
 
@@ -709,7 +711,6 @@ print_line(UNIT * uptr, int unit)
 
     char                out[150];       /* Temp conversion buffer */
     int                 i;
-    int                 chan = uptr->CMD & URCSTA_CHMASK;
 
     if ((uptr->flags & (UNIT_ATT)) == 0)
         return; /* attached? */
@@ -753,7 +754,7 @@ print_line(UNIT * uptr, int unit)
     case 1:
     case 2:     /* Skip to top of form */
     case 12:
-        uptr->LINENUM = uptr->capac+1;
+        uptr->LINENUM = uptr->LPP+1;
         break;
 
     case 3:     /* Even lines */
@@ -775,13 +776,13 @@ print_line(UNIT * uptr, int unit)
         }
         break;
     case 5:     /* Half page */
-        while((uptr->LINENUM != (uptr->capac/2)) ||
-              (uptr->LINENUM != (uptr->capac))) {
+        while((uptr->LINENUM != (uptr->LPP/2)) ||
+              (uptr->LINENUM != (uptr->LPP))) {
             sim_fwrite("\r", 1, 1, uptr->fileref);
             sim_fwrite("\n", 1, 1, uptr->fileref);
             uptr->pos += 2;
             uptr->LINENUM++;
-            if (((uint32)uptr->LINENUM) > uptr->capac) {
+            if (uptr->LINENUM > uptr->LPP) {
                 uptr->LINENUM = 1;
                 break;
             }
@@ -789,15 +790,15 @@ print_line(UNIT * uptr, int unit)
         }
         break;
     case 6:     /* 1/4 Page */
-        while((uptr->LINENUM != (uptr->capac/4)) ||
-              (uptr->LINENUM != (uptr->capac/2)) ||
-              (uptr->LINENUM != (uptr->capac/2+uptr->capac/4)) ||
-              (uptr->LINENUM != (uptr->capac))) {
+        while((uptr->LINENUM != (uptr->LPP/4)) ||
+              (uptr->LINENUM != (uptr->LPP/2)) ||
+              (uptr->LINENUM != (uptr->LPP/2+uptr->LPP/4)) ||
+              (uptr->LINENUM != (uptr->LPP))) {
             sim_fwrite("\r", 1, 1, uptr->fileref);
             sim_fwrite("\n", 1, 1, uptr->fileref);
             uptr->pos += 2;
             uptr->LINENUM++;
-            if (((uint32)uptr->LINENUM) > uptr->capac) {
+            if (uptr->LINENUM > uptr->LPP) {
                 uptr->LINENUM = 1;
                 break;
             }
@@ -817,7 +818,7 @@ print_line(UNIT * uptr, int unit)
     }
 
 
-    if (((uint32)uptr->LINENUM) > uptr->capac) {
+    if (uptr->LINENUM > uptr->LPP) {
         uptr->LINENUM = 1;
         uptr->CMD |= URCSTA_EOF;
         sim_fwrite("\f", 1, 1, uptr->fileref);
@@ -905,6 +906,7 @@ lpr_attach(UNIT * uptr, CONST char *file)
     t_stat              r;
     int                 u = (uptr - lpr_unit);
 
+    sim_switches |= SWMASK ('A');   /* Position to EOF */
     if ((r = attach_unit(uptr, file)) != SCPE_OK)
         return r;
     if ((sim_switches & SIM_SW_REST) == 0) {
@@ -1025,7 +1027,7 @@ con_srv(UNIT *uptr) {
         if(chan_read_char(chan, &ch, 0)) {
              sim_putchar('\r');
              sim_putchar('\n');
-             sim_debug(DEBUG_EXP, &con_dev, "\n\r");
+             sim_debug(DEBUG_EXP, &con_dev, "\n");
              uptr->CMD &= ~URCSTA_FILL;
              chan_set_end(chan);
        } else {
@@ -1042,7 +1044,7 @@ con_srv(UNIT *uptr) {
                 (con_data[0].inptr == con_data[0].outptr))) {
              sim_putchar('\r');
              sim_putchar('\n');
-             sim_debug(DEBUG_EXP, &con_dev, "\n\r");
+             sim_debug(DEBUG_EXP, &con_dev, "\n");
              uptr->CMD &= ~URCSTA_READ;
              chan_set_end(chan);
        }

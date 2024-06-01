@@ -95,7 +95,6 @@
 #include "b5500_defs.h"
 #include "sim_timer.h"
 #include <math.h>
-#include <time.h>
 
 #define UNIT_V_MSIZE    (UNIT_V_UF + 0)
 #define UNIT_MSIZE      (7 << UNIT_V_MSIZE)
@@ -2001,6 +2000,7 @@ sim_instr(void)
             reason = sim_process_event();
             if (reason != SCPE_OK)
                  break; /* process */
+            sim_interval--;
         }
         /* Passed time quantum */
         if (sim_interval <= 0) {        /* event queue? */
@@ -3073,7 +3073,7 @@ control:
                              }
                              break;
                         }
-                        sim_debug(DEBUG_DETAIL, &cpu_dev, "IAR=%05o Q=%03o\n\r",
+                        sim_debug(DEBUG_DETAIL, &cpu_dev, "IAR=%05o Q=%03o\n",
                                          IAR,Q);
                         L = 0;
                         S = 0100;
@@ -3149,7 +3149,7 @@ control:
                         if (P2_run == 0 || (cpu_unit[1].flags & UNIT_DIS)) {
                             break;
                         }
-                        sim_debug(DEBUG_DETAIL, &cpu_dev, "HALT P2\n\r");
+                        sim_debug(DEBUG_DETAIL, &cpu_dev, "HALT P2\n");
                         /* Flag P2 to stop */
                         hltf[1] = 1;
                         TROF = 1;       /* Reissue until CPU2 stopped */
@@ -3159,7 +3159,7 @@ control:
                         if (NCSF)
                            break;
                         A_valid();      /* Load ICW */
-                        sim_debug(DEBUG_DETAIL, &cpu_dev, "INIT P1\n\r");
+                        sim_debug(DEBUG_DETAIL, &cpu_dev, "INIT P1\n");
                         initiate();
                         break;
 
@@ -3180,7 +3180,7 @@ control:
                         cpu_index = 1;  /* To CPU 2 */
                         Ma = 010;
                         memory_cycle(4);
-                        sim_debug(DEBUG_DETAIL, &cpu_dev, "INIT P2\n\r");
+                        sim_debug(DEBUG_DETAIL, &cpu_dev, "INIT P2\n");
                         initiate();
                         break;
 
@@ -3929,8 +3929,10 @@ cpu_set_hist(UNIT * uptr, int32 val, CONST char *cptr, void *desc)
         return SCPE_OK;
     }
     lnt = (int32) get_uint(cptr, 10, HIST_MAX, &r);
-    if ((r != SCPE_OK) || (lnt && (lnt < HIST_MIN)))
-        return SCPE_ARG;
+    if (r != SCPE_OK)
+        return sim_messagef (SCPE_ARG, "Invalid Numeric Value: %s.  Maximum is %d\n", cptr, HIST_MAX);
+    if (lnt && (lnt < HIST_MIN))
+        return sim_messagef (SCPE_ARG, "%d is less than the minumum history value of %d\n", lnt, HIST_MIN);
     hst_p = 0;
     if (hst_lnt) {
         free(hst);
@@ -3974,6 +3976,10 @@ cpu_show_hist(FILE * st, UNIT * uptr, int32 val, CONST void *desc)
                 "                       X     S     F     R      M  GH KV Flags"
                 "  Q Intruction     IAR\n\n");
     for (k = 0; k < lnt; k++) { /* print specified */
+        if (stop_cpu) {                 /* Control-C (SIGINT) */
+            stop_cpu = FALSE;
+            break;                      /* abandon remaining output */
+        }
         h = &hst[(++di) % hst_lnt];     /* entry pointer */
         if (h->c & HIST_PC) {   /* instruction? */
             int i;

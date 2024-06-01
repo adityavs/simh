@@ -104,8 +104,9 @@ OpenBSD (OpenBSD 4.6)
 
     # Run simulator and "attach xq tap:tun0"
     
-FreeBSD (FreeBSD 8.0)
+FreeBSD (FreeBSD 11.3)
 
+    /sbin/sysctl net.link.tap.up_on_open=1 
     /sbin/ifconfig tap0 create
     /sbin/ifconfig tap0 up
 
@@ -114,9 +115,6 @@ FreeBSD (FreeBSD 8.0)
     /sbin/ifconfig bridge0 up
 
     # Run simulator and "attach xq tap:tap0"
-    # Note: it seems that on FreeBSD you may have to 
-    #       "/sbin/ifconfig tap0 up" and "/sbin/ifconfig bridge0 up" prior to each 
-    #       time simh "attach"es the tap:tap0 device
 
 NetBSD (NetBSD 5.0.2)
 
@@ -218,19 +216,20 @@ Note: As mentioned above, NAT networking is specifically capable of providing
 -------------------------------------------------------------------------------
 
 Windows notes:
- 1. The Windows-specific code uses the WinPCAP 4.1.3 package from
-    https://www.winpcap.org/install/bin/WinPcap_4_1_3.exe. This package 
-    for windows simulates the libpcap package that is freely available for 
-    un*x systems.  The Npcap package does not currently allow simulators
-    to exchange packets with the host system while WinPcap does.  
+ 1. The Npcap package available from https://nmap.org/npcap is the preferred
+    interface for Windows 7 onward since the original WinPCAP 4.1.3 package 
+    from https://www.winpcap.org/install/bin/WinPcap_4_1_3.exe is no longer
+    developed or supported. These packages for windows simulate the libpcap 
+    package that is freely available for un*x systems.  
 
- 2. You must *install* the WinPCAP runtime package.
+ 2. You must *install* the Npcap or WinPCAP runtime package.
 
- 3. The first time the WinPCAP driver is used, it will be dynamically loaded,
-    and the user must be an Administrator on the machine to do so. If you need
-    to run as an unprivileged user, you must set the "npf" driver to autostart. 
-    Current WinPcap installers provide an option to configure this at 
-    installation time, so if that choice is made, then there is no need for
+ 3. The first time the Npcap/WinPCAP driver is used, it will be dynamically 
+    loaded, and the user must be an Administrator on the machine to do so. 
+    If you need to run as an unprivileged user, you must set the "npf" driver 
+    to autostart. 
+    Current Npcap and WinPcap installers provide an option to configure this 
+    at installation time, so if that choice is made, then there is no need for
     administrator privileged to run simulators with network support.
 
 
@@ -240,10 +239,11 @@ Building on Windows:
  Express 2008 or 2010 interactive development environments, read the file 
  ".\Visual Studio Projects\0ReadMe_Projects.txt" for details about the
  required dependencies.  Alternatively, you can build simh with networking
- support using the MinGW GCC compiler environment or the cygwin environment.
- Each of these Visual C++, MinGW and cygwin build environments require 
- WinPcap and Posix packages being available.  These should be located in a 
- directory structure parallel to the current simulator source directory.
+ support using the MinGW GCC compiler environment (32 bit) or the cygwin 
+ environment.  Each of these Visual C++, MinGW and cygwin build environments 
+ require Npcap or WinPcap and Posix threading packages being available.  
+ These should be located in a directory structure parallel to the current 
+ simulator source directory.
  
  For Example, the directory structure should look like:
 
@@ -259,6 +259,8 @@ Building on Windows:
 
     https://github.com/simh/windows-build/archive/windows-build.zip
 
+ This archive of dependent components for Windows simulators will 
+ automatically be downloaded, if needed, when building with Visual Studio.
 
  There are Windows batch files provided to initiate compiles using the MinGW
  compiler tool chain.  These batch files are located in the same directory 
@@ -270,8 +272,8 @@ Building on Windows:
  file is invoked with.
  
  The current windows network built binaries will run on any system without 
- regard to whether or not WinPcap is installed, and will provide 
- Network functionality when WinPcap is available.
+ regard to whether or not Npcap or WinPcap is installed, and will provide 
+ Network functionality when Npcap or WinPcap is available.
 
 -------------------------------------------------------------------------------
 
@@ -290,7 +292,7 @@ for details.
 ----- WARNING ----- WARNING ----- WARNING ----- WARNING ----- WARNING -----
 
  1. For all platforms, you must run SIMH(scp) with sufficient privilege to
-    allow the Ethernet card can be set into promiscuous mode and to write
+    allow the Ethernet card to be set into promiscuous mode and to write
     packets through the driver. 
       a) For Windows systems this means having administrator privileges to 
          start the "npf" driver.  The current WinPcap installer offers an 
@@ -365,9 +367,9 @@ Building on Linux, {Free|Net|Open}BSD, OS/X, Solaris, other *nix:
     binaries will run on any system whether or not libpcap is installed.  If 
     you want to force direct libpcap linking during a build you do so by 
     typing 'make USE_NETWORK=1'.  You must build with gcc to do this.  There 
-    is no observable benefit to statically linking against libpcap.  Support
-    for statically linking libpcap ia deprecated on all platforms except
-    Linux and OS X where it has already been removed.
+    is no observable benefit to directly linking against libpcap.  Support
+    for directly linking libpcap is deprecated on all platforms except
+    Linux and macOS where it has already been removed.
     
  4. Some platforms (HP-UX in particular) may not have vendor supplied libpcap 
     components available and installed with the operating system.  The packages

@@ -1,9 +1,7 @@
 /*************************************************************************
  *                                                                       *
- * $Id: wd179x.h 1907 2008-05-21 07:04:17Z hharte $                      *
- *                                                                       *
- * Copyright (c) 2007-2008 Howard M. Harte.                              *
- * http://www.hartetec.com                                               *
+ * Copyright (c) 2007-2022 Howard M. Harte.                              *
+ * https://github.com/hharte                                             *
  *                                                                       *
  * Permission is hereby granted, free of charge, to any person obtaining *
  * a copy of this software and associated documentation files (the       *
@@ -18,24 +16,22 @@
  *                                                                       *
  * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,       *
  * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF    *
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND                 *
- * NONINFRINGEMENT. IN NO EVENT SHALL HOWARD M. HARTE BE LIABLE FOR ANY  *
- * CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,  *
- * TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE     *
- * SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                *
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NON-            *
+ * INFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE   *
+ * LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN       *
+ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN     *
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE      *
+ * SOFTWARE.                                                             *
  *                                                                       *
- * Except as contained in this notice, the name of Howard M. Harte shall *
+ * Except as contained in this notice, the names of The Authors shall    *
  * not be used in advertising or otherwise to promote the sale, use or   *
  * other dealings in this Software without prior written authorization   *
- * Howard M. Harte.                                                      *
+ * from the Authors.                                                     *
  *                                                                       *
  * SIMH Interface based on altairz80_hdsk.c, by Peter Schorn.            *
  *                                                                       *
  * Module Description:                                                   *
  *     Generic Intel 8272 Disk Controller module for SIMH.               *
- *                                                                       *
- * Environment:                                                          *
- *     User mode only                                                    *
  *                                                                       *
  *************************************************************************/
 
@@ -46,6 +42,7 @@ extern uint8 WD179X_Read(const uint32 Addr);
 extern uint8 WD179X_Write(const uint32 Addr, uint8 cData);
 
 extern void wd179x_external_restore(void);
+extern uint8 wd179x_get_nheads(void);
 
 #define WD179X_FDC_MSR       0   /* R=FDC Main Status Register, W=Drive Select Register */
 #define WD179X_FDC_DATA      1   /* R/W FDC Data Register */
@@ -55,8 +52,12 @@ extern void wd179x_external_restore(void);
 #define WD179X_SECTOR 2
 #define WD179X_DATA   3
 
+/* Note: this struct must be kept in sync with WD179X_INFO */
 typedef struct {
     PNP_INFO pnp;       /* Plug-n-Play Information */
+    uint16 fdctype;     /* Default is 1793 */
+    uint8 intenable;    /* Interrupt Enable */
+    uint8 intvector;    /* Interrupt Vector */
     uint8 intrq;        /* WD179X Interrupt Request Output (EOJ) */
     uint8 hld;          /* WD179X Head Load Output */
     uint8 drq;          /* WD179X DMA Request Output */

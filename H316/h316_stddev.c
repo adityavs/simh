@@ -408,7 +408,7 @@ else {
         }
     else if ((uptr->flags & UNIT_ASC) && (c != 0))      /* ASCII? */
         c = c | 0200;
-    uptr->pos = ftell (uptr->fileref);                  /* update pos */
+    uptr->pos = uptr->pos + 1;                          /* update pos */
     }
 SET_INT (INT_PTR);                                      /* set ready flag */
 uptr->buf = c & 0377;                                   /* get byte */
@@ -421,13 +421,16 @@ return SCPE_OK;
 t_stat pt_attach (UNIT *uptr, CONST char *cptr)
 {
 t_stat r;
+int32 saved_switches = sim_switches;
 
 if (!(uptr->flags & UNIT_ATTABLE))                      /* not tti,tto */
     return SCPE_NOFNC;
-if (strcmp ("PTR", sim_uname (uptr)) == 0)              /* PTR is read only */
-    sim_switches |= SWMASK ('R');
-if ((r = attach_unit (uptr, cptr)))
+sim_switches &= ~SWMASK ('A');
+if (strcmp ("PTP", sim_uname (uptr)) == 0)              /* PTP is append default */
+    sim_switches |= SWMASK ('A');
+if ((r = attach_unit (uptr, cptr)) != SCPE_OK)
     return r;
+sim_switches = saved_switches;
 if (sim_switches & SWMASK ('A'))                        /* -a? ASCII */
     uptr->flags |= UNIT_ASC;
 else if (sim_switches & SWMASK ('U'))                   /* -u? Unix ASCII */
@@ -565,7 +568,7 @@ if (putc (c, uptr->fileref) == EOF) {                   /* output byte */
     clearerr (uptr->fileref);
     return SCPE_IOERR;
     }
-uptr->pos = ftell (uptr->fileref);                      /* update pos */
+uptr->pos = uptr->pos + 1;                              /* update pos */
 return SCPE_OK;
 }
 
@@ -701,7 +704,7 @@ else if ((ruptr->flags & UNIT_ATT) &&                   /* TTR attached */
             }
         else if ((ruptr->flags & UNIT_ASC) && (c != 0))
             c = c | 0200;                               /* ASCII nz? cvt */
-        ruptr->pos = ftell (ruptr->fileref);
+        ruptr->pos = ruptr->pos + 1;
         }
     if (ttr_xoff_read != 0) {                           /* reader stopping? */
         if (c == RUBOUT)                                /* rubout? stop */
@@ -805,7 +808,7 @@ if ((puptr->flags & UNIT_ATT) &&                        /* TTP attached */
             clearerr (puptr->fileref);
             return SCPE_IOERR;
             }
-        puptr->pos = ftell (puptr->fileref);            /* update pos */
+        puptr->pos = puptr->pos + 1;                    /* update pos */
         }
     }
 return SCPE_OK;

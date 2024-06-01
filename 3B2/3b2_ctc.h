@@ -1,6 +1,6 @@
-/* 3b2_ctc.h: AT&T 3B2 Model 400 "CTC" feature card
+/* 3b2_ctc.h: CM195H 23MB Cartridge Tape Controller CIO Card
 
-   Copyright (c) 2018, Seth J. Morabito
+   Copyright (c) 2018-2022, Seth J. Morabito
 
    Permission is hereby granted, free of charge, to any person
    obtaining a copy of this software and associated documentation
@@ -51,11 +51,7 @@
 #ifndef _3B2_CTC_H_
 #define _3B2_CTC_H_
 
-#include "sim_defs.h"
-#include "3b2_io.h"
-
-#define UNIT_V_WLK    (DKUF_V_UF + 0)     /* Write-locked tape */
-#define UNIT_WLK      (1 << UNIT_V_WLK)
+#include "3b2_defs.h"
 
 #define CTC_ID        0x0005
 #define CTC_IPL       12
@@ -150,8 +146,8 @@ t_stat ctc_reset(DEVICE *dptr);
 t_stat ctc_svc(UNIT *uptr);
 t_stat ctc_attach(UNIT *uptr, CONST char *cptr);
 t_stat ctc_detach(UNIT *uptr);
-void ctc_sysgen(uint8 cid);
-void ctc_express(uint8 cid);
-void ctc_full(uint8 cid);
+void ctc_sysgen(uint8 slot);
+void ctc_express(uint8 slot);
+void ctc_full(uint8 slot);
 
 #endif /* _3B2_CTC_H_ */

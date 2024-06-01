@@ -65,7 +65,7 @@ unsigned char FS[2];
 REG fs_reg[] = {
     { REGDATA ( "Готов", READY, 2,  2, 14, 1, NULL, NULL, 0, 0, 0) },
     { ORDATA  ( "ФС1500-1", FS[0], 8) },
-    { ORDATA  ( "ФС1500-2", FS[2], 8) },
+    { ORDATA  ( "ФС1500-2", FS[1], 8) },
     { 0 }
 };
 
@@ -155,7 +155,7 @@ void fs_control (int num, uint32 cmd)
         besm6_debug("<<< ФС1500-%d команда %o", num, cmd);
     if (! IS_RDY(FS1_READY >> num)) {
         if (fs_dev.dctrl)
-            besm6_debug("<<< ФС1500-%d не готово", num, cmd);
+            besm6_debug("<<< ФС1500-%d не готово", num);
         return;
     }
     switch (cmd) {
@@ -208,7 +208,7 @@ static unsigned char unicode_to_upp (unsigned short ch) {
     return (ch & 1) ? ret : ret | 0x80;
 }
 
-static int utf8_getc (FILE *fin);
+int utf8_getc (FILE *fin);
 
 /*
  * Событие: читаем очередной символ с перфоленты в регистр.
@@ -461,7 +461,7 @@ unicode_to_gost (unsigned short val)
  * Read Unicode symbol from file.
  * Convert from UTF-8 encoding.
  */
-static int
+int
 utf8_getc (FILE *fin)
 {
     int c1, c2, c3;
